@@ -12,9 +12,6 @@ from typing import Any
 import httpx
 from loguru import logger
 
-# Import at module level for test patching (lazy import inside methods avoids circular imports at runtime)
-from nanobot.providers.xai_oauth import get_xai_oauth_token  # noqa: F401
-
 _VIDEO_GEN_PROVIDERS: dict[str, type[VideoGenerationProvider]] = {}
 
 
@@ -89,6 +86,8 @@ class XAIGrokVideoGenerationClient(VideoGenerationProvider):
         return "https://api.x.ai/v1"
 
     async def _get_bearer(self) -> str:
+        from nanobot.providers.xai_oauth import get_xai_oauth_token
+
         try:
             token = await asyncio.to_thread(get_xai_oauth_token)
             if token and token.access:

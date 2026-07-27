@@ -73,7 +73,7 @@ async def test_generate_submits_then_polls(tmp_path):
         return b"FAKEMP4"
 
     with (
-        patch("nanobot.providers.video_generation.get_xai_oauth_token", return_value=fake_token),
+        patch("nanobot.providers.xai_oauth.get_xai_oauth_token", return_value=fake_token),
         patch("nanobot.providers.video_generation._download_bytes", new=fake_download),
         patch("asyncio.sleep", new=AsyncMock()),
     ):
@@ -112,7 +112,7 @@ async def test_generate_falls_back_to_api_key(tmp_path):
         return b"FAKEMP4"
 
     with (
-        patch("nanobot.providers.video_generation.get_xai_oauth_token", side_effect=Exception("no token")),
+        patch("nanobot.providers.xai_oauth.get_xai_oauth_token", side_effect=Exception("no token")),
         patch("nanobot.providers.video_generation._download_bytes", new=fake_download),
         patch("asyncio.sleep", new=AsyncMock()),
     ):
@@ -149,7 +149,7 @@ async def test_generate_raises_on_timeout(tmp_path):
             return always_pending
 
     with (
-        patch("nanobot.providers.video_generation.get_xai_oauth_token", return_value=fake_token),
+        patch("nanobot.providers.xai_oauth.get_xai_oauth_token", return_value=fake_token),
         patch("asyncio.sleep", new=AsyncMock()),
     ):
         with pytest.raises(VideoGenerationError, match="timed out"):
@@ -164,7 +164,7 @@ async def test_generate_raises_on_timeout(tmp_path):
 
 @pytest.mark.asyncio
 async def test_generate_raises_when_no_auth(tmp_path):
-    with patch("nanobot.providers.video_generation.get_xai_oauth_token", side_effect=Exception("no")):
+    with patch("nanobot.providers.xai_oauth.get_xai_oauth_token", side_effect=Exception("no")):
         with pytest.raises(VideoGenerationError, match="xAI Grok"):
             await XAIGrokVideoGenerationClient(api_key=None).generate(
                 prompt="x", model="grok-imagine-video",
