@@ -1039,6 +1039,15 @@ export interface ImageGenerationSettingsUpdate {
   maxImagesPerTurn: number;
 }
 
+export interface VideoGenerationSettingsUpdate {
+  enabled?: boolean;
+  model?: string;
+  defaultDuration?: number;
+  defaultAspectRatio?: string;
+  defaultResolution?: string;
+  saveDir?: string;
+}
+
 export interface TranscriptionSettingsUpdate {
   enabled: boolean;
   provider: string;

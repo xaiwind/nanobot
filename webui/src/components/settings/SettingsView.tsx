@@ -133,6 +133,7 @@ import {
   updateProviderSettings,
   updateSettings,
   updateTranscriptionSettings,
+  updateVideoGenerationSettings,
   updateWebSearchSettings,
 } from "@/lib/api";
 import { notifyCliAppsChanged } from "@/lib/cli-app-events";
@@ -177,6 +178,7 @@ import type {
   ProviderOAuthCompletionResult,
   ProviderOAuthLoginResult,
   ProviderOAuthPending,
+  VideoGenerationSettingsUpdate,
   ProviderSettingsUpdate,
   SessionAutomationJob,
   SettingsPayload,
@@ -494,6 +496,14 @@ const DEFAULT_IMAGE_GENERATION_FORM: ImageGenerationSettingsUpdate = {
   maxImagesPerTurn: 4,
 };
 
+const DEFAULT_VIDEO_GENERATION_FORM: VideoGenerationSettingsUpdate = {
+  enabled: false,
+  model: "grok-imagine-video",
+  defaultDuration: 5,
+  defaultAspectRatio: "16:9",
+  defaultResolution: "720p",
+};
+
 const DEFAULT_TRANSCRIPTION_FORM: TranscriptionSettingsUpdate = {
   enabled: true,
   provider: "groq",
@@ -578,6 +588,23 @@ function imageGenerationFormFromPayload(payload: SettingsPayload): ImageGenerati
     defaultAspectRatio: payload.image_generation.default_aspect_ratio,
     defaultImageSize: payload.image_generation.default_image_size,
     maxImagesPerTurn: payload.image_generation.max_images_per_turn,
+  };
+}
+
+function videoGenerationFormFromPayload(payload: SettingsPayload): VideoGenerationSettingsUpdate {
+  const videoGen = payload.video_generation ?? {
+    enabled: false,
+    model: "grok-imagine-video",
+    default_duration: 5,
+    default_aspect_ratio: "16:9",
+    default_resolution: "720p",
+  };
+  return {
+    enabled: videoGen.enabled,
+    model: videoGen.model,
+    defaultDuration: videoGen.default_duration,
+    defaultAspectRatio: videoGen.default_aspect_ratio,
+    defaultResolution: videoGen.default_resolution,
   };
 }
 
@@ -668,6 +695,7 @@ export function SettingsView({
   const [xaiOAuthCompleting, setXaiOAuthCompleting] = useState(false);
   const [webSearchSaving, setWebSearchSaving] = useState(false);
   const [imageGenerationSaving, setImageGenerationSaving] = useState(false);
+  const [videoGenerationSaving, setVideoGenerationSaving] = useState(false);
   const [transcriptionSaving, setTranscriptionSaving] = useState(false);
   const [networkSafetySaving, setNetworkSafetySaving] = useState(false);
   const [apiService, setApiService] = useState<ApiServicePayload | null>(null);
@@ -715,6 +743,12 @@ export function SettingsView({
         ? imageGenerationFormFromPayload(initialSettings)
         : DEFAULT_IMAGE_GENERATION_FORM,
   );
+  const [videoGenerationForm, setVideoGenerationForm] = useState<VideoGenerationSettingsUpdate>(
+    () =>
+      initialSettings
+        ? videoGenerationFormFromPayload(initialSettings)
+        : DEFAULT_VIDEO_GENERATION_FORM,
+  );
   const [transcriptionForm, setTranscriptionForm] = useState<TranscriptionSettingsUpdate>(
     () => initialSettings ? transcriptionFormFromPayload(initialSettings) : DEFAULT_TRANSCRIPTION_FORM,
   );
@@ -755,6 +789,7 @@ export function SettingsView({
       setModelCallOrder(payload.model_call_order ?? []);
       setWebSearchForm((prev) => webSearchFormFromPayload(payload, prev));
       setImageGenerationForm(imageGenerationFormFromPayload(payload));
+      setVideoGenerationForm(videoGenerationFormFromPayload(payload));
       setTranscriptionForm(transcriptionFormFromPayload(payload));
       setNetworkSafetyForm(networkSafetyFormFromPayload(payload));
       if (payload.restart_required_sections) {
@@ -1407,6 +1442,24 @@ export function SettingsView({
       setError((err as Error).message);
     } finally {
       setImageGenerationSaving(false);
+    }
+  };
+
+  const saveVideoGenerationSettings = async () => {
+    if (!settings || videoGenerationSaving) return;
+    setVideoGenerationSaving(true);
+    try {
+      const payload = await updateVideoGenerationSettings(token, videoGenerationForm);
+      applyPayload(payload);
+      if (payload.requires_restart) {
+        setPendingRestartSections((prev) => ({ ...prev, video: true }));
+      }
+      await maybeRestartHostEngine(payload);
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setVideoGenerationSaving(false);
     }
   };
 
@@ -2079,6 +2132,15 @@ export function SettingsView({
               imageProviderRestartPending={pendingRestartSections.image || pendingRestartSections.runtime}
               onRestart={restartViaSettingsSurface}
               isRestarting={isRestarting || hostEngineApplying}
+              imageGenerationForm={imageGenerationForm}
+              setImageGenerationForm={setImageGenerationForm}
+              imageGenerationDirty={imageGenerationDirty}
+              imageGenerationSaving={imageGenerationSaving}
+              saveImageGenerationSettings={saveImageGenerationSettings}
+              videoGenerationForm={videoGenerationForm}
+              setVideoGenerationForm={setVideoGenerationForm}
+              videoGenerationSaving={videoGenerationSaving}
+              saveVideoGenerationSettings={saveVideoGenerationSettings}
             />
           </div>
         );
@@ -4055,6 +4117,15 @@ function ProvidersSettings({
   imageProviderRestartPending,
   onRestart,
   isRestarting,
+  imageGenerationForm,
+  setImageGenerationForm,
+  imageGenerationDirty,
+  imageGenerationSaving,
+  saveImageGenerationSettings,
+  videoGenerationForm,
+  setVideoGenerationForm,
+  videoGenerationSaving,
+  saveVideoGenerationSettings,
 }: {
   settings: SettingsPayload;
   nanobotFeatures: NanobotFeaturesPayload | null;
@@ -4078,6 +4149,15 @@ function ProvidersSettings({
   imageProviderRestartPending: boolean;
   onRestart?: () => void;
   isRestarting?: boolean;
+  imageGenerationForm: ImageGenerationSettingsUpdate;
+  setImageGenerationForm: Dispatch<SetStateAction<ImageGenerationSettingsUpdate>>;
+  imageGenerationDirty: boolean;
+  imageGenerationSaving: boolean;
+  saveImageGenerationSettings: () => Promise<void>;
+  videoGenerationForm: VideoGenerationSettingsUpdate;
+  setVideoGenerationForm: Dispatch<SetStateAction<VideoGenerationSettingsUpdate>>;
+  videoGenerationSaving: boolean;
+  saveVideoGenerationSettings: () => Promise<void>;
 }) {
   const { t } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
@@ -4429,6 +4509,132 @@ function ProvidersSettings({
                 </div>
               </>
             )}
+            {provider.name === "xai_grok" && provider.configured ? (
+              <>
+                {/* Image Generation sub-section */}
+                <div className="mt-4 border-t pt-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <ImageIcon className="h-4 w-4" />
+                    <span className="font-medium text-sm">{t("Image Generation")}</span>
+                    <ToggleButton
+                      label={t("Image Generation")}
+                      checked={imageGenerationForm.enabled ?? false}
+                      onChange={(v) => {
+                        setImageGenerationForm((f) => ({ ...f, enabled: v, provider: "xai_grok" }));
+                      }}
+                    />
+                  </div>
+                  {imageGenerationForm.enabled && (
+                    <div className="space-y-2 text-sm">
+                      <label className="flex items-center gap-2">
+                        <span className="w-24 shrink-0">{t("settings.actions.model")}</span>
+                        <select
+                          className="flex-1 rounded border px-2 py-1 text-sm"
+                          value={imageGenerationForm.model ?? "grok-2-image-1212"}
+                          onChange={(e) => setImageGenerationForm((f) => ({ ...f, model: e.target.value }))}
+                        >
+                          <option value="grok-2-image-1212">grok-2-image-1212</option>
+                          <option value="grok-imagine">grok-imagine</option>
+                        </select>
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <span className="w-24 shrink-0">{t("Aspect Ratio")}</span>
+                        <select
+                          className="flex-1 rounded border px-2 py-1 text-sm"
+                          value={imageGenerationForm.defaultAspectRatio ?? "1:1"}
+                          onChange={(e) => setImageGenerationForm((f) => ({ ...f, defaultAspectRatio: e.target.value }))}
+                        >
+                          {["1:1", "16:9", "9:16", "4:3"].map((r) => <option key={r} value={r}>{r}</option>)}
+                        </select>
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <span className="w-24 shrink-0">{t("Resolution")}</span>
+                        <select
+                          className="flex-1 rounded border px-2 py-1 text-sm"
+                          value={imageGenerationForm.defaultImageSize ?? "1K"}
+                          onChange={(e) => setImageGenerationForm((f) => ({ ...f, defaultImageSize: e.target.value }))}
+                        >
+                          <option value="1K">1K</option>
+                          <option value="2K">2K</option>
+                        </select>
+                      </label>
+                      <button
+                        className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground"
+                        onClick={saveImageGenerationSettings}
+                        disabled={imageGenerationSaving || !imageGenerationDirty}
+                      >
+                        {imageGenerationSaving ? t("settings.actions.saving") : t("settings.actions.save")}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Video Generation sub-section */}
+                <div className="mt-4 border-t pt-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Waves className="h-4 w-4" />
+                    <span className="font-medium text-sm">{t("Video Generation")}</span>
+                    <ToggleButton
+                      label={t("Video Generation")}
+                      checked={videoGenerationForm.enabled ?? false}
+                      onChange={(v) => setVideoGenerationForm((f) => ({ ...f, enabled: v }))}
+                    />
+                  </div>
+                  {videoGenerationForm.enabled && (
+                    <div className="space-y-2 text-sm">
+                      <label className="flex items-center gap-2">
+                        <span className="w-24 shrink-0">{t("settings.actions.model")}</span>
+                        <select
+                          className="flex-1 rounded border px-2 py-1 text-sm"
+                          value={videoGenerationForm.model ?? "grok-imagine-video"}
+                          onChange={(e) => setVideoGenerationForm((f) => ({ ...f, model: e.target.value }))}
+                        >
+                          <option value="grok-imagine-video">grok-imagine-video</option>
+                          <option value="grok-imagine-video-1.5">grok-imagine-video-1.5</option>
+                        </select>
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <span className="w-24 shrink-0">{t("Duration (s)")}</span>
+                        <input
+                          type="number" min={1} max={15}
+                          className="w-20 rounded border px-2 py-1 text-sm"
+                          value={videoGenerationForm.defaultDuration ?? 5}
+                          onChange={(e) => setVideoGenerationForm((f) => ({ ...f, defaultDuration: Number(e.target.value) }))}
+                        />
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <span className="w-24 shrink-0">{t("Aspect Ratio")}</span>
+                        <select
+                          className="flex-1 rounded border px-2 py-1 text-sm"
+                          value={videoGenerationForm.defaultAspectRatio ?? "16:9"}
+                          onChange={(e) => setVideoGenerationForm((f) => ({ ...f, defaultAspectRatio: e.target.value }))}
+                        >
+                          {["16:9", "1:1", "9:16"].map((r) => <option key={r} value={r}>{r}</option>)}
+                        </select>
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <span className="w-24 shrink-0">{t("Resolution")}</span>
+                        <select
+                          className="flex-1 rounded border px-2 py-1 text-sm"
+                          value={videoGenerationForm.defaultResolution ?? "720p"}
+                          onChange={(e) => setVideoGenerationForm((f) => ({ ...f, defaultResolution: e.target.value }))}
+                        >
+                          <option value="720p">720p</option>
+                          <option value="1080p">1080p</option>
+                        </select>
+                      </label>
+                      <button
+                        className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground"
+                        onClick={saveVideoGenerationSettings}
+                        disabled={videoGenerationSaving}
+                      >
+                        {videoGenerationSaving ? t("settings.actions.saving") : t("settings.actions.save")}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : null}
           </div>
         ) : null}
       </div>
