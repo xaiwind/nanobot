@@ -528,6 +528,15 @@ export interface SettingsPayload {
       default_model?: string | null;
     }>;
   };
+  video_generation: {
+    enabled: boolean;
+    provider: string;
+    model: string;
+    default_duration: number;
+    default_aspect_ratio: string;
+    default_resolution: string;
+    save_dir: string;
+  };
   transcription?: {
     enabled: boolean;
     provider: string;
