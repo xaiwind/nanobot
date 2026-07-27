@@ -1258,6 +1258,15 @@ def settings_payload(
             "save_dir": image_config.save_dir,
             "providers": image_providers,
         },
+        "video_generation": {
+            "enabled": config.tools.video_generation.enabled,
+            "provider": config.tools.video_generation.provider,
+            "model": config.tools.video_generation.model,
+            "default_duration": config.tools.video_generation.default_duration,
+            "default_aspect_ratio": config.tools.video_generation.default_aspect_ratio,
+            "default_resolution": config.tools.video_generation.default_resolution,
+            "save_dir": config.tools.video_generation.save_dir,
+        },
         "transcription": {
             "enabled": transcription.enabled,
             "provider": transcription.provider,
@@ -2218,6 +2227,68 @@ def update_image_generation_settings(query: QueryParams) -> dict[str, Any]:
         )
         if not selected_provider or not selected_provider["configured"]:
             raise WebUISettingsError("image generation provider is not configured")
+
+    if changed:
+        save_config(config)
+    return settings_payload(requires_restart=changed)
+
+
+def update_video_generation_settings(query: QueryParams) -> dict[str, Any]:
+    config = load_config()
+    video_config = config.tools.video_generation
+    changed = False
+
+    enabled = _query_first(query, "enabled")
+    if enabled is not None:
+        parsed = _parse_bool(enabled, "enabled")
+        if video_config.enabled != parsed:
+            video_config.enabled = parsed
+            changed = True
+
+    model = _query_first(query, "model")
+    if model is not None:
+        model = model.strip()
+        if not model:
+            raise WebUISettingsError("video generation model is required")
+        if len(model) > 200:
+            raise WebUISettingsError("video generation model is too long")
+        if video_config.model != model:
+            video_config.model = model
+            changed = True
+
+    default_duration = _query_first_alias(query, "default_duration", "defaultDuration")
+    if default_duration is not None:
+        try:
+            dur = int(default_duration)
+        except ValueError:
+            raise WebUISettingsError("duration must be an integer") from None
+        if dur < 1 or dur > 15:
+            raise WebUISettingsError("duration must be between 1 and 15")
+        if video_config.default_duration != dur:
+            video_config.default_duration = dur
+            changed = True
+
+    default_aspect_ratio = _query_first_alias(
+        query, "default_aspect_ratio", "defaultAspectRatio"
+    )
+    if default_aspect_ratio is not None:
+        default_aspect_ratio = default_aspect_ratio.strip()
+        if default_aspect_ratio not in {"16:9", "1:1", "9:16"}:
+            raise WebUISettingsError("unsupported aspect ratio")
+        if video_config.default_aspect_ratio != default_aspect_ratio:
+            video_config.default_aspect_ratio = default_aspect_ratio
+            changed = True
+
+    default_resolution = _query_first_alias(
+        query, "default_resolution", "defaultResolution"
+    )
+    if default_resolution is not None:
+        default_resolution = default_resolution.strip()
+        if default_resolution not in {"720p", "1080p"}:
+            raise WebUISettingsError("unsupported resolution")
+        if video_config.default_resolution != default_resolution:
+            video_config.default_resolution = default_resolution
+            changed = True
 
     if changed:
         save_config(config)
