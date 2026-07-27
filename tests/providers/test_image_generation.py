@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -20,7 +21,9 @@ from nanobot.providers.image_generation import (
     OpenAIImageGenerationClient,
     OpenRouterImageGenerationClient,
     StepFunImageGenerationClient,
+    XAIGrokImageGenerationClient,
     ZhipuImageGenerationClient,
+    get_image_gen_provider,
 )
 
 PNG_BYTES = (
@@ -1426,6 +1429,119 @@ async def test_openai_no_images_raises() -> None:
 
     with pytest.raises(ImageGenerationError, match="returned no images"):
         await client.generate(prompt="draw", model="dall-e-3")
+
+
+# ---------------------------------------------------------------------------
+# xAI Grok Image Generation
+# ---------------------------------------------------------------------------
+
+# --- resolution mapping ---
+
+def test_xai_resolution_1k():
+    assert XAIGrokImageGenerationClient._xai_resolution("1K") == "1k"
+
+def test_xai_resolution_2k():
+    assert XAIGrokImageGenerationClient._xai_resolution("2K") == "2k"
+
+def test_xai_resolution_1024():
+    assert XAIGrokImageGenerationClient._xai_resolution("1024x1024") == "1k"
+
+def test_xai_resolution_2048():
+    assert XAIGrokImageGenerationClient._xai_resolution("2048x2048") == "2k"
+
+def test_xai_resolution_unknown_returns_none():
+    assert XAIGrokImageGenerationClient._xai_resolution("4K") is None
+
+def test_xai_resolution_none_input():
+    assert XAIGrokImageGenerationClient._xai_resolution(None) is None
+
+# --- registry ---
+
+def test_xai_grok_registered():
+    assert get_image_gen_provider("xai_grok") is XAIGrokImageGenerationClient
+
+# --- generate: oauth success ---
+
+@pytest.mark.asyncio
+async def test_generate_uses_oauth_token():
+    fake_token = MagicMock(access="tok-abc", account_id="acct-1")
+    b64 = __import__("base64").b64encode(PNG_BYTES).decode()
+    response = FakeResponse({"data": [{"b64_json": b64}]})
+    client = FakeClient(response)
+
+    with patch(
+        "nanobot.providers.xai_oauth.get_xai_oauth_token",
+        return_value=fake_token,
+    ):
+        result = await XAIGrokImageGenerationClient(api_key=None).generate(
+            prompt="a cat", model="grok-2-image-1212", client=client
+        )
+
+    assert result.images
+    call = client.calls[0]
+    assert call["url"] == "https://api.x.ai/v1/images/generations"
+    assert call["headers"]["Authorization"] == "Bearer tok-abc"
+    body = call["json"]
+    assert body["model"] == "grok-2-image-1212"
+    assert "size" not in body
+
+# --- generate: oauth fails, uses api_key fallback ---
+
+@pytest.mark.asyncio
+async def test_generate_falls_back_to_api_key():
+    b64 = __import__("base64").b64encode(PNG_BYTES).decode()
+    response = FakeResponse({"data": [{"b64_json": b64}]})
+    client = FakeClient(response)
+
+    with patch(
+        "nanobot.providers.xai_oauth.get_xai_oauth_token",
+        side_effect=Exception("no token"),
+    ):
+        result = await XAIGrokImageGenerationClient(api_key="sk-fallback").generate(
+            prompt="a cat", model="grok-2-image-1212", client=client
+        )
+
+    assert result.images
+    assert client.calls[0]["headers"]["Authorization"] == "Bearer sk-fallback"
+
+# --- generate: no auth ---
+
+@pytest.mark.asyncio
+async def test_generate_raises_when_no_auth():
+    with patch(
+        "nanobot.providers.xai_oauth.get_xai_oauth_token",
+        side_effect=Exception("no token"),
+    ):
+        with pytest.raises(ImageGenerationError, match="xAI Grok"):
+            await XAIGrokImageGenerationClient(api_key=None).generate(
+                prompt="a cat", model="grok-2-image-1212"
+            )
+
+# --- aspect_ratio and resolution in body ---
+
+@pytest.mark.asyncio
+async def test_generate_sends_aspect_ratio_and_resolution():
+    fake_token = MagicMock(access="tok-abc", account_id="acct-1")
+    b64 = __import__("base64").b64encode(PNG_BYTES).decode()
+    response = FakeResponse({"data": [{"b64_json": b64}]})
+    client = FakeClient(response)
+
+    with patch(
+        "nanobot.providers.xai_oauth.get_xai_oauth_token",
+        return_value=fake_token,
+    ):
+        await XAIGrokImageGenerationClient(api_key=None).generate(
+            prompt="a cat",
+            model="grok-2-image-1212",
+            aspect_ratio="16:9",
+            image_size="1K",
+            client=client,
+        )
+
+    body = client.calls[0]["json"]
+    assert body["aspect_ratio"] == "16:9"
+    assert body["resolution"] == "1k"
+    assert "size" not in body
 
 
 # ---------------------------------------------------------------------------
