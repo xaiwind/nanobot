@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import pytest
-from nanobot.webui.settings_api import update_video_generation_settings
-from nanobot.webui.settings_api import WebUISettingsError
+
+from nanobot.webui.settings_api import WebUISettingsError, update_video_generation_settings
 
 
 def test_update_enabled(tmp_path, monkeypatch):
     from unittest.mock import patch
+
     from nanobot.config.schema import Config
 
     config = Config()
@@ -19,6 +20,7 @@ def test_update_enabled(tmp_path, monkeypatch):
 
 def test_update_model(tmp_path, monkeypatch):
     from unittest.mock import patch
+
     from nanobot.config.schema import Config
 
     config = Config()
@@ -31,6 +33,7 @@ def test_update_model(tmp_path, monkeypatch):
 
 def test_update_rejects_empty_model():
     from unittest.mock import patch
+
     from nanobot.config.schema import Config
 
     config = Config()
@@ -42,6 +45,7 @@ def test_update_rejects_empty_model():
 
 def test_update_duration_bounds():
     from unittest.mock import patch
+
     from nanobot.config.schema import Config
 
     config = Config()

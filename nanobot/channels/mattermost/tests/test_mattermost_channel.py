@@ -12,6 +12,7 @@ import pytest
 
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.queue import MessageBus
+from nanobot.channels.mattermost.manifest import SETUP_SPEC
 from nanobot.channels.mattermost.runtime import (
     MATTERMOST_MAX_MESSAGE_LEN,
     MattermostChannel,
@@ -119,9 +120,29 @@ def test_config_defaults():
     assert config.token == ""
     assert config.streaming is True
     assert config.streaming_max_chars == 16000
+    assert config.send_tool_hints is True
     assert config.dm.enabled is True
     assert config.dm.policy == "open"
     assert config.reply_in_thread is True
+    assert config.group_policy_in_thread == "mention"
+
+
+def test_thread_policy_inherits_group_policy_when_omitted():
+    config = MattermostConfig.model_validate({"groupPolicy": "open"})
+    assert config.group_policy_in_thread == "open"
+
+    explicit = MattermostConfig.model_validate({
+        "groupPolicy": "open",
+        "groupPolicyInThread": "mention",
+    })
+    assert explicit.group_policy_in_thread == "mention"
+
+
+def test_setup_contract_exposes_thread_policy():
+    field = SETUP_SPEC.fields["groupPolicyInThread"]
+    assert field.kind == "enum"
+    assert field.choices == {"open", "mention", "allowlist"}
+    assert field.default == "mention"
 
 
 def test_config_camelcase_aliases():
@@ -131,6 +152,7 @@ def test_config_camelcase_aliases():
         "allowFromMatchMode": "username",
         "streamingMaxChars": 8000,
         "replyInThread": False,
+        "sendToolHints": False,
     }
     config = MattermostConfig.model_validate(raw)
     assert config.server_url == "https://mm.example.com"
@@ -138,11 +160,13 @@ def test_config_camelcase_aliases():
     assert config.allow_from_match_mode == "username"
     assert config.streaming_max_chars == 8000
     assert config.reply_in_thread is False
+    assert config.send_tool_hints is False
 
 
 def test_config_default_config_classmethod():
     d = MattermostChannel.default_config()
     assert d["enabled"] is False
+    assert d["sendToolHints"] is True
     assert d["serverUrl"] == ""
     assert d["token"] == ""
 
@@ -371,6 +395,86 @@ async def test_group_policy_allowlist():
     assert channel._should_respond_in_channel("msg", "c2") is False
 
 
+@pytest.mark.asyncio
+async def test_group_policy_in_thread_defaults_to_group_policy():
+    """Existing configs keep their main-channel behavior in threads."""
+    channel, fake = _make_channel({"groupPolicy": "mention"})
+    channel._self_username = "nanobot"
+    # In a main channel (not thread), mention is required
+    assert channel._should_respond_in_channel("hello", "c1", in_thread=False) is False
+    assert channel._should_respond_in_channel("@nanobot hello", "c1", in_thread=False) is True
+    # In a thread, the omitted override inherits mention policy.
+    assert channel._should_respond_in_channel("hello", "c1", in_thread=True) is False
+    assert channel._should_respond_in_channel("@nanobot hello", "c1", in_thread=True) is True
+
+
+@pytest.mark.asyncio
+async def test_group_policy_in_thread_mention():
+    """Thread can also use mention policy when configured."""
+    channel, fake = _make_channel({
+        "groupPolicy": "mention",
+        "groupPolicyInThread": "mention",
+    })
+    channel._self_username = "nanobot"
+    # In a thread with mention policy, mention is required
+    assert channel._should_respond_in_channel("hello", "c1", in_thread=True) is False
+    assert channel._should_respond_in_channel("@nanobot hello", "c1", in_thread=True) is True
+
+
+@pytest.mark.asyncio
+async def test_group_policy_in_thread_open():
+    """Thread uses open policy when explicitly configured."""
+    channel, fake = _make_channel({
+        "groupPolicy": "mention",
+        "groupPolicyInThread": "open",
+    })
+    assert channel._should_respond_in_channel("hello", "c1", in_thread=True) is True
+
+
+@pytest.mark.asyncio
+async def test_posted_thread_event_uses_thread_policy():
+    """A real posted event derives thread policy from its root_id."""
+    channel, fake = _make_channel({
+        "groupPolicy": "mention",
+        "groupPolicyInThread": "open",
+        "includeThreadContext": False,
+    })
+    channel._self_id = "bot_id"
+    channel._self_username = "nanobot"
+    with patch.object(channel, "_handle_message", AsyncMock()) as mock_handle:
+        ws_msg = {
+            "event": "posted",
+            "data": {
+                "channel_type": "O",
+                "post": json.dumps({
+                    "id": "reply_1",
+                    "user_id": "user_1",
+                    "channel_id": "channel_1",
+                    "message": "follow up without a mention",
+                    "root_id": "root_1",
+                }),
+            },
+            "broadcast": {},
+        }
+
+        await channel._handle_ws_message(ws_msg)
+
+    mock_handle.assert_awaited_once()
+    assert mock_handle.call_args.kwargs["session_key"] == "mattermost:channel_1:root_1"
+
+
+@pytest.mark.asyncio
+async def test_group_policy_in_thread_allowlist():
+    """Thread uses allowlist policy when configured."""
+    channel, fake = _make_channel({
+        "groupPolicy": "mention",
+        "groupPolicyInThread": "allowlist",
+        "groupAllowFrom": ["c1"],
+    })
+    assert channel._should_respond_in_channel("msg", "c1", in_thread=True) is True
+    assert channel._should_respond_in_channel("msg", "c2", in_thread=True) is False
+
+
 # ---------------------------------------------------------------------------
 # Match mode: id / username / email
 # ---------------------------------------------------------------------------
@@ -575,6 +679,33 @@ async def test_stream_end_keyword_resuming_does_not_post_or_mark_done():
     reactions = [c for c in fake.post_calls if c["path"] == "/api/v4/reactions"]
     assert posts == []
     assert reactions == []
+    assert "s1" not in channel._stream_buffers
+
+
+@pytest.mark.asyncio
+async def test_stream_end_merge_next_preserves_buffer_until_final_end():
+    channel, fake = _make_channel()
+    channel._self_id = "bot_id"
+    fake.set_post_response("/api/v4/posts", {"id": "stream_post_1"})
+    await channel.send_delta("chan_1", "first ", stream_id="s1")
+
+    await channel.send_delta(
+        "chan_1",
+        "boundary ",
+        stream_id="s1",
+        stream_end=True,
+        resuming=True,
+        merge_next=True,
+    )
+
+    assert channel._stream_buffers["s1"] == "first boundary "
+
+    await channel.send_delta("chan_1", "second", stream_id="s1")
+    await channel.send_delta("chan_1", "", stream_id="s1", stream_end=True)
+
+    posts = [call for call in fake.post_calls if call["path"] == "/api/v4/posts"]
+    assert len(posts) == 1
+    assert posts[0]["json"]["message"] == "first boundary second"
     assert "s1" not in channel._stream_buffers
 
 

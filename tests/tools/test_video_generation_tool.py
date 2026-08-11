@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
-
 from nanobot.agent.tools.video_generation import VideoGenerationToolConfig
 
 

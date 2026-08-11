@@ -11,7 +11,7 @@ from nanobot.agent.loop import AgentLoop
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.command import CommandContext
-from nanobot.config.schema import AgentDefaults
+from nanobot.config.schema import AgentDefaults, Config
 from nanobot.providers.base import LLMResponse
 
 
@@ -80,9 +80,6 @@ def _make_fake_compact(
     track_archived: list | None = None,
     track_count: bool = False,
 ):
-    """Return a fake compact_idle_session that mirrors the real method's session mutation."""
-    from nanobot.session.manager import Session as _Session
-
     state = {"count": 0}
 
     async def _fake_compact(key: str, *, runtime, max_suffix: int = 8) -> str:
@@ -93,34 +90,16 @@ def _make_fake_compact(
         if not tail:
             loop.sessions.save(session)
             return ""
-
-        probe = _Session(
-            key=session.key,
-            messages=tail.copy(),
-            created_at=session.created_at,
-            updated_at=session.updated_at,
-            metadata={},
-            last_consolidated=0,
-        )
-        result = probe.retain_recent_legal_suffix(
-            max_suffix,
-            extend_to_user=True,
-        )
-        kept = probe.messages
-        archive_msgs = result.dropped[result.already_consolidated_count:]
-
-        if not archive_msgs and not kept:
-            loop.sessions.save(session)
-            return ""
+        archive_end = session.last_consolidated + len(tail)
+        archive_msgs = tail
 
         last_active = session.updated_at
         s = summary
-        if archive_msgs:
-            if on_archive:
-                result = on_archive(archive_msgs)
-                s = result if isinstance(result, str) else summary
-            if track_archived is not None:
-                track_archived.extend(archive_msgs)
+        if on_archive:
+            result = on_archive(archive_msgs)
+            s = result if isinstance(result, str) else summary
+        if track_archived is not None:
+            track_archived.extend(archive_msgs)
 
         if s and s != "(nothing)":
             session.metadata["_last_summary"] = {
@@ -128,8 +107,7 @@ def _make_fake_compact(
                 "last_active": last_active.isoformat(),
             }
 
-        session.messages = kept
-        session.last_consolidated = 0
+        session.last_consolidated = archive_end
         loop.sessions.save(session)
         return s
 
@@ -180,10 +158,62 @@ class TestSessionTTLConfig:
         assert data["idleCompactAfterMinutes"] == 30
         assert "sessionTtlMinutes" not in data
 
+    def test_idle_scan_interval_defaults_to_sixty_seconds(self):
+        """The config default should avoid scanning all sessions every idle tick."""
+        defaults = AgentDefaults()
+        assert defaults.idle_compact_check_interval_seconds == 60
+
+    def test_idle_scan_interval_uses_camel_case_config_key(self):
+        """The JSON config should use the standard camelCase alias."""
+        defaults = AgentDefaults.model_validate({"idleCompactCheckIntervalSeconds": 10})
+        assert defaults.idle_compact_check_interval_seconds == 10
+        data = defaults.model_dump(mode="json", by_alias=True)
+        assert data["idleCompactCheckIntervalSeconds"] == 10
+
     def test_session_file_cap_is_internal_constant(self):
         """Session file cap should remain an internal constant, not a config field."""
         from nanobot.session.manager import FILE_MAX_MESSAGES
         assert FILE_MAX_MESSAGES == 2000
+
+
+class TestIdleScanThrottling:
+    """Test scheduling of full idle-session scans."""
+
+    def test_configured_idle_scan_interval_throttles_checks(self, tmp_path, monkeypatch):
+        """The configured interval should reach the loop and gate session scans."""
+        ticks = iter((1_000.0, 1_000.0, 1_009.999, 1_010.0))
+        monkeypatch.setattr("nanobot.agent.loop.time.monotonic", lambda: next(ticks))
+        config = Config.model_validate({
+            "agents": {
+                "defaults": {
+                    "workspace": str(tmp_path),
+                    "idleCompactCheckIntervalSeconds": 10,
+                }
+            }
+        })
+        provider = MagicMock()
+        provider.get_default_model.return_value = "test-model"
+        loop = AgentLoop.from_config(config, provider=provider)
+        loop.auto_compact.check_expired = MagicMock()
+
+        loop._check_expired_sessions_if_due()
+        loop.auto_compact.check_expired.assert_called_once()
+        loop._check_expired_sessions_if_due()
+        loop.auto_compact.check_expired.assert_called_once()
+        loop._check_expired_sessions_if_due()
+
+        assert loop.auto_compact.check_expired.call_count == 2
+
+    def test_zero_idle_scan_interval_checks_every_tick(self, tmp_path, monkeypatch):
+        """An explicit zero should leave each idle tick eligible to scan."""
+        monkeypatch.setattr("nanobot.agent.loop.time.monotonic", lambda: 1_000.0)
+        loop = _make_loop(tmp_path)
+        loop.auto_compact.check_expired = MagicMock()
+
+        loop._check_expired_sessions_if_due()
+        loop._check_expired_sessions_if_due()
+
+        assert loop.auto_compact.check_expired.call_count == 2
 
 
 class TestAgentLoopTTLParam:
@@ -307,7 +337,7 @@ class TestAutoCompact:
         loop.sessions.save(s2)
 
         loop.consolidator.compact_idle_session = _make_fake_compact(loop)
-        loop.auto_compact.check_expired(loop._schedule_background, loop.runtime_for_session)
+        loop.auto_compact.check_expired(loop.schedule_background, loop.runtime_for_session)
         await _drain_background_tasks(loop)
 
         active_after = loop.sessions.get_or_create("cli:active")
@@ -316,8 +346,7 @@ class TestAutoCompact:
         await loop.close_mcp()
 
     @pytest.mark.asyncio
-    async def test_auto_compact_archives_prefix_and_keeps_recent_suffix(self, tmp_path):
-        """_archive should summarize the old prefix and keep a recent legal suffix."""
+    async def test_auto_compact_archives_full_tail_without_deleting_history(self, tmp_path):
         loop = _make_loop(tmp_path, session_ttl_minutes=15)
         session = loop.sessions.get_or_create("cli:test")
         _add_turns(session, 6)
@@ -330,11 +359,14 @@ class TestAutoCompact:
 
         await loop.auto_compact._archive("cli:test", runtime=loop.llm_runtime())
 
-        assert len(archived_messages) == 4
+        assert len(archived_messages) == 12
         session_after = loop.sessions.get_or_create("cli:test")
-        assert len(session_after.messages) == loop.auto_compact._RECENT_SUFFIX_MESSAGES
-        assert session_after.messages[0]["content"] == "msg user 2"
-        assert session_after.messages[-1]["content"] == "msg assistant 5"
+        assert len(session_after.messages) == 12
+        assert session_after.messages[0]["content"] == "msg user 0"
+        visible = session_after.get_history(max_messages=12)
+        assert len(visible) == loop.auto_compact._RECENT_SUFFIX_MESSAGES
+        assert visible[0]["content"] == "msg user 2"
+        assert visible[-1]["content"] == "msg assistant 5"
         await loop.close_mcp()
 
     @pytest.mark.asyncio
@@ -351,17 +383,19 @@ class TestAutoCompact:
         await loop.auto_compact._archive("cli:test", runtime=loop.llm_runtime())
 
         session_after = loop.sessions.get_or_create("cli:test")
-        assert len(session_after.messages) > loop.auto_compact._RECENT_SUFFIX_MESSAGES
-        assert session_after.messages[0]["content"] == "record this"
-        assert session_after.messages[-1]["content"] == "done"
+        assert session_after.messages[0]["content"] == "old user 0"
+        visible = session_after.get_history(max_messages=len(session_after.messages))
+        assert len(visible) > loop.auto_compact._RECENT_SUFFIX_MESSAGES
+        assert visible[0]["content"] == "record this"
+        assert visible[-1]["content"] == "done"
         tool_results = {
             m.get("tool_call_id")
-            for m in session_after.messages
+            for m in visible
             if m.get("role") == "tool"
         }
         assert all(
             tc["id"] in tool_results
-            for m in session_after.messages
+            for m in visible
             for tc in (m.get("tool_calls") or [])
         )
         await loop.close_mcp()
@@ -384,7 +418,10 @@ class TestAutoCompact:
         assert entry is not None
         assert entry[0] == "User said hello."
         session_after = loop.sessions.get_or_create("cli:test")
-        assert len(session_after.messages) == loop.auto_compact._RECENT_SUFFIX_MESSAGES
+        assert len(session_after.messages) == 12
+        assert len(session_after.get_history(max_messages=12)) == (
+            loop.auto_compact._RECENT_SUFFIX_MESSAGES
+        )
         await loop.close_mcp()
 
     @pytest.mark.asyncio
@@ -417,16 +454,15 @@ class TestAutoCompact:
 
         await loop.auto_compact._archive("cli:test", runtime=loop.llm_runtime())
 
-        assert len(archived_messages) == 2
+        assert len(archived_messages) == 10
         await loop.close_mcp()
 
 
 class TestAutoCompactIdleDetection:
-    """Test idle detection triggers auto-new in _process_message."""
+    """Idle detection tests."""
 
     @pytest.mark.asyncio
     async def test_no_auto_compact_when_ttl_disabled(self, tmp_path):
-        """No auto-new should happen when TTL is 0 (disabled)."""
         loop = _make_loop(tmp_path, session_ttl_minutes=0)
         session = loop.sessions.get_or_create("cli:test")
         session.add_message("user", "old message")
@@ -442,7 +478,6 @@ class TestAutoCompactIdleDetection:
 
     @pytest.mark.asyncio
     async def test_auto_compact_triggers_on_idle(self, tmp_path):
-        """Proactive auto-new archives expired session; _process_message reloads it."""
         loop = _make_loop(tmp_path, session_ttl_minutes=15)
         session = loop.sessions.get_or_create("cli:test")
         _add_turns(session, 6, prefix="old")
@@ -461,14 +496,17 @@ class TestAutoCompactIdleDetection:
         await loop._process_message(msg)
 
         session_after = loop.sessions.get_or_create("cli:test")
-        assert len(archived_messages) == 4
-        assert not any(m["content"] == "old user 0" for m in session_after.messages)
+        assert len(archived_messages) == 12
+        assert any(m["content"] == "old user 0" for m in session_after.messages)
+        assert not any(
+            m["content"] == "old user 0"
+            for m in session_after.get_history(max_messages=len(session_after.messages))
+        )
         assert any(m["content"] == "new msg" for m in session_after.messages)
         await loop.close_mcp()
 
     @pytest.mark.asyncio
     async def test_no_auto_compact_when_active(self, tmp_path):
-        """No auto-new should happen when session is recently active."""
         loop = _make_loop(tmp_path, session_ttl_minutes=15)
         session = loop.sessions.get_or_create("cli:test")
         session.add_message("user", "recent message")
@@ -506,7 +544,6 @@ class TestAutoCompactIdleDetection:
 
     @pytest.mark.asyncio
     async def test_auto_compact_with_slash_new(self, tmp_path):
-        """Auto-new fires before /new dispatches; session is cleared twice but idempotent."""
         loop = _make_loop(tmp_path, session_ttl_minutes=15)
         session = loop.sessions.get_or_create("cli:test")
         for i in range(4):
@@ -524,7 +561,6 @@ class TestAutoCompactIdleDetection:
         assert "new session started" in response.content.lower()
 
         session_after = loop.sessions.get_or_create("cli:test")
-        # Session is empty (auto-new archived and cleared, /new cleared again)
         assert len(session_after.messages) == 0
         await loop.close_mcp()
 
@@ -565,11 +601,10 @@ class TestAutoCompactIdleDetection:
 
 
 class TestAutoCompactSystemMessages:
-    """Test that auto-new also works for system messages."""
+    """System-message idle compaction tests."""
 
     @pytest.mark.asyncio
     async def test_auto_compact_triggers_for_system_messages(self, tmp_path):
-        """Proactive auto-new archives expired session; system messages reload it."""
         loop = _make_loop(tmp_path, session_ttl_minutes=15)
         session = loop.sessions.get_or_create("cli:test")
         _add_turns(session, 6, prefix="old")
@@ -588,9 +623,10 @@ class TestAutoCompactSystemMessages:
         await loop._process_message(msg)
 
         session_after = loop.sessions.get_or_create("cli:test")
+        assert any(m["content"] == "old user 0" for m in session_after.messages)
         assert not any(
             m["content"] == "old user 0"
-            for m in session_after.messages
+            for m in session_after.get_history(max_messages=len(session_after.messages))
         )
         await loop.close_mcp()
 
@@ -600,7 +636,6 @@ class TestAutoCompactEdgeCases:
 
     @pytest.mark.asyncio
     async def test_auto_compact_with_nothing_summary(self, tmp_path):
-        """Auto-new should not inject when archive produces '(nothing)'."""
         loop = _make_loop(tmp_path, session_ttl_minutes=15)
         session = loop.sessions.get_or_create("cli:test")
         _add_turns(session, 6, prefix="thanks")
@@ -614,15 +649,17 @@ class TestAutoCompactEdgeCases:
         await loop.auto_compact._archive("cli:test", runtime=loop.llm_runtime())
 
         session_after = loop.sessions.get_or_create("cli:test")
-        assert len(session_after.messages) == loop.auto_compact._RECENT_SUFFIX_MESSAGES
+        assert len(session_after.messages) == 12
+        assert len(session_after.get_history(max_messages=12)) == (
+            loop.auto_compact._RECENT_SUFFIX_MESSAGES
+        )
         # "(nothing)" summary should not be stored
         assert "cli:test" not in loop.auto_compact._summaries
 
         await loop.close_mcp()
 
     @pytest.mark.asyncio
-    async def test_auto_compact_archive_failure_still_keeps_recent_suffix(self, tmp_path):
-        """Auto-new should keep the recent suffix even if LLM archive falls back to raw dump."""
+    async def test_auto_compact_archive_failure_preserves_raw_history(self, tmp_path):
         loop = _make_loop(tmp_path, session_ttl_minutes=15)
         session = loop.sessions.get_or_create("cli:test")
         _add_turns(session, 6, prefix="important")
@@ -635,7 +672,10 @@ class TestAutoCompactEdgeCases:
         await loop.auto_compact._archive("cli:test", runtime=loop.llm_runtime())
 
         session_after = loop.sessions.get_or_create("cli:test")
-        assert len(session_after.messages) == loop.auto_compact._RECENT_SUFFIX_MESSAGES
+        assert len(session_after.messages) == 12
+        assert len(session_after.get_history(max_messages=12)) == (
+            loop.auto_compact._RECENT_SUFFIX_MESSAGES
+        )
 
         await loop.close_mcp()
 
@@ -665,7 +705,7 @@ class TestAutoCompactEdgeCases:
         await loop._process_message(msg)
 
         session_after = loop.sessions.get_or_create("cli:test")
-        assert archived_messages == []
+        assert [message["content"] for message in archived_messages] == ["previous message"]
         assert any(m["content"] == "previous message" for m in session_after.messages)
         assert any(m["content"] == "interrupted response" for m in session_after.messages)
 
@@ -673,13 +713,10 @@ class TestAutoCompactEdgeCases:
 
 
 class TestAutoCompactIntegration:
-    """End-to-end test of auto session new feature."""
+    """Idle compaction integration tests."""
 
     @pytest.mark.asyncio
     async def test_full_lifecycle(self, tmp_path):
-        """
-        Full lifecycle: messages -> idle -> auto-new -> archive -> clear -> summary injected as runtime context.
-        """
         loop = _make_loop(tmp_path, session_ttl_minutes=15)
         session = loop.sessions.get_or_create("cli:test")
 
@@ -707,6 +744,7 @@ class TestAutoCompactIntegration:
                 tool_calls=[],
             )
         )
+        await loop.auto_compact._archive("cli:test", runtime=loop.llm_runtime())
 
         msg = InboundMessage(
             channel="cli", sender_id="user", chat_id="test",
@@ -717,9 +755,13 @@ class TestAutoCompactIntegration:
         # Phase 4: Verify
         session_after = loop.sessions.get_or_create("cli:test")
 
-        # The oldest messages should be trimmed from live session history
+        assert any(
+            "past tense is used" in str(m.get("content", "")).lower()
+            for m in session_after.messages
+        )
         assert not any(
-            "past tense is used" in str(m.get("content", "")) for m in session_after.messages
+            "past tense is used" in str(m.get("content", "")).lower()
+            for m in session_after.get_history(max_messages=len(session_after.messages))
         )
 
         # Summary should NOT be persisted in session (ephemeral, one-shot)
@@ -769,13 +811,13 @@ class TestAutoCompactIntegration:
 
 
 class TestProactiveAutoCompact:
-    """Test proactive auto-new on idle ticks (TimeoutError path in run loop)."""
+    """Proactive idle compaction tests."""
 
     @staticmethod
     async def _run_check_expired(loop, active_session_keys=()):
         """Helper: run check_expired via callback and wait for background tasks."""
         loop.auto_compact.check_expired(
-            loop._schedule_background,
+            loop.schedule_background,
             loop.runtime_for_session,
             active_session_keys=active_session_keys,
         )
@@ -847,8 +889,11 @@ class TestProactiveAutoCompact:
         await self._run_check_expired(loop)
 
         session_after = loop.sessions.get_or_create("cli:test")
-        assert len(session_after.messages) == loop.auto_compact._RECENT_SUFFIX_MESSAGES
-        assert len(archived_messages) == 2
+        assert len(session_after.messages) == 10
+        assert len(session_after.get_history(max_messages=10)) == (
+            loop.auto_compact._RECENT_SUFFIX_MESSAGES
+        )
+        assert len(archived_messages) == 10
         entry = loop.auto_compact._summaries.get("cli:test")
         assert entry is not None
         assert entry[0] == "User chatted about old things."
@@ -912,12 +957,12 @@ class TestProactiveAutoCompact:
         loop.consolidator.compact_idle_session = _slow_compact
 
         # First call starts archiving via callback
-        loop.auto_compact.check_expired(loop._schedule_background, loop.runtime_for_session)
+        loop.auto_compact.check_expired(loop.schedule_background, loop.runtime_for_session)
         await started.wait()
         assert archive_count == 1
 
         # Second call should skip (key is in _archiving)
-        loop.auto_compact.check_expired(loop._schedule_background, loop.runtime_for_session)
+        loop.auto_compact.check_expired(loop.schedule_background, loop.runtime_for_session)
         assert archive_count == 1
 
         # Clean up
@@ -1030,7 +1075,10 @@ class TestProactiveAutoCompact:
 
         assert _fake_compact.state["count"] == 1
         s1_after = loop.sessions.get_or_create("cli:expired_idle")
-        assert len(s1_after.messages) == loop.auto_compact._RECENT_SUFFIX_MESSAGES
+        assert len(s1_after.messages) == 12
+        assert len(s1_after.get_history(max_messages=12)) == (
+            loop.auto_compact._RECENT_SUFFIX_MESSAGES
+        )
         s2_after = loop.sessions.get_or_create("cli:expired_active")
         assert len(s2_after.messages) == 12  # Preserved
         s3_after = loop.sessions.get_or_create("cli:recent")
@@ -1159,7 +1207,10 @@ class TestSummaryPersistence:
 
         # prepare_session should recover summary from metadata
         reloaded = loop.sessions.get_or_create("cli:test")
-        assert len(reloaded.messages) == loop.auto_compact._RECENT_SUFFIX_MESSAGES
+        assert len(reloaded.messages) == 12
+        assert len(reloaded.get_history(max_messages=12)) == (
+            loop.auto_compact._RECENT_SUFFIX_MESSAGES
+        )
         _, summary = loop.auto_compact.prepare_session(reloaded, "cli:test")
 
         assert summary is not None

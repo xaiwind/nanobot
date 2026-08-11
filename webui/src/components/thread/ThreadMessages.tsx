@@ -8,6 +8,7 @@ import type { CliAppInfo, McpPresetInfo, SlashCommand, UIMessage } from "@/lib/t
 
 interface ThreadMessagesProps {
   messages: UIMessage[];
+  temporary?: boolean;
   /** When true, agent turn still in flight — keeps activity timeline expanded. */
   isStreaming?: boolean;
   hiddenUserMessageCount?: number;
@@ -50,6 +51,7 @@ export function assistantForkFlags(units: DisplayUnit[]): boolean[] {
 
 export function ThreadMessages({
   messages,
+  temporary = false,
   isStreaming = false,
   hiddenUserMessageCount = 0,
   cliApps = [],
@@ -107,7 +109,11 @@ export function ThreadMessages({
           unit.type === "message" && unit.message.role === "assistant" && forkFlags[index]
             ? nextUserIndex
             : undefined;
-        if (unit.type === "message" && unit.message.role === "user") nextUserIndex += 1;
+        if (
+          unit.type === "message"
+          && unit.message.role === "user"
+          && unit.message.deliveryStatus !== "failed"
+        ) nextUserIndex += 1;
 
         return (
           <ThreadDisplayUnit
@@ -121,6 +127,7 @@ export function ThreadMessages({
             forkIndex={forkIndex}
             showForkBoundary={index === forkBoundaryAfterUnitIndex}
             forkBoundaryLabel={t("thread.forkedFromHistory")}
+            temporary={temporary}
             cliApps={cliApps}
             mcpPresets={mcpPresets}
             slashCommands={slashCommands}
@@ -143,6 +150,7 @@ interface ThreadDisplayUnitProps {
   forkIndex?: number;
   showForkBoundary: boolean;
   forkBoundaryLabel: string;
+  temporary: boolean;
   cliApps: CliAppInfo[];
   mcpPresets: McpPresetInfo[];
   slashCommands: SlashCommand[];
@@ -160,6 +168,7 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
   forkIndex,
   showForkBoundary,
   forkBoundaryLabel,
+  temporary,
   cliApps,
   mcpPresets,
   slashCommands,
@@ -196,6 +205,7 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
         ) : (
           <MessageBubble
             message={unit.message}
+            temporary={temporary}
             cliApps={cliApps}
             mcpPresets={mcpPresets}
             slashCommands={slashCommands}
@@ -223,6 +233,7 @@ function threadDisplayUnitPropsEqual(
     && previous.forkIndex === next.forkIndex
     && previous.showForkBoundary === next.showForkBoundary
     && previous.forkBoundaryLabel === next.forkBoundaryLabel
+    && previous.temporary === next.temporary
     && previous.cliApps === next.cliApps
     && previous.mcpPresets === next.mcpPresets
     && previous.slashCommands === next.slashCommands

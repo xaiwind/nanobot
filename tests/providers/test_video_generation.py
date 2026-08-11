@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -8,7 +7,6 @@ import httpx
 import pytest
 
 from nanobot.providers.video_generation import (
-    GeneratedVideoResponse,
     VideoGenerationError,
     XAIGrokVideoGenerationClient,
     get_video_gen_provider,

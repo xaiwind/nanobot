@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -56,7 +56,9 @@ describe("ThreadMessages", () => {
   });
 
   it("preserves an answer's markdown tree across completion and the next prompt", async () => {
-    await preloadMarkdownText();
+    await act(async () => {
+      await preloadMarkdownText();
+    });
     const turnId = "turn-1";
     const streaming: UIMessage[] = [
       {
@@ -952,6 +954,34 @@ describe("ThreadMessages", () => {
     ];
     render(<ThreadMessages messages={messages} isStreaming={false} />);
     expect(screen.getAllByRole("button", { name: "Copy" })).toHaveLength(2);
+  });
+
+  it("does not count failed optimistic messages in assistant fork indices", () => {
+    const onForkFromMessage = vi.fn();
+    const messages: UIMessage[] = [
+      { id: "u1", role: "user", content: "one", createdAt: 1 },
+      { id: "a1", role: "assistant", content: "answer one", createdAt: 2 },
+      {
+        id: "u-failed",
+        role: "user",
+        content: "not persisted",
+        deliveryStatus: "failed",
+        createdAt: 3,
+      },
+      { id: "u2", role: "user", content: "two", createdAt: 4 },
+      { id: "a2", role: "assistant", content: "answer two", createdAt: 5 },
+    ];
+
+    render(
+      <ThreadMessages
+        messages={messages}
+        isStreaming={false}
+        onForkFromMessage={onForkFromMessage}
+      />,
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Fork" }).at(-1)!);
+    expect(onForkFromMessage).toHaveBeenCalledWith(2);
   });
 
   it("uses turn ids as activity grouping boundaries when available", () => {

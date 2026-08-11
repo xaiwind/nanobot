@@ -11,7 +11,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from loguru import logger
 
@@ -25,7 +25,7 @@ _MAX_KEY_LEN = 512
 _MAX_TITLE_LEN = 160
 _MAX_TAG_LEN = 40
 _ALLOWED_DENSITIES = {"comfortable", "compact"}
-_ALLOWED_SORTS = {"updated_desc", "created_desc", "title_asc"}
+_ALLOWED_SORTS = {"updated_desc", "created_desc", "title_asc", "manual"}
 
 
 def webui_sidebar_state_path() -> Path:
@@ -37,6 +37,7 @@ def default_webui_sidebar_state() -> dict[str, Any]:
         "schema_version": WEBUI_SIDEBAR_STATE_SCHEMA_VERSION,
         "pinned_keys": [],
         "archived_keys": [],
+        "session_order": [],
         "title_overrides": {},
         "project_name_overrides": {},
         "tags_by_key": {},
@@ -66,7 +67,7 @@ def _clean_string_list(value: Any, *, max_len: int = _MAX_KEY_LEN) -> list[str]:
         return []
     out: list[str] = []
     seen: set[str] = set()
-    for item in value[:_MAX_LIST_ITEMS]:
+    for item in cast(list[Any], value)[:_MAX_LIST_ITEMS]:
         cleaned = _clean_string(item, max_len=max_len)
         if cleaned is None or cleaned in seen:
             continue
@@ -79,7 +80,7 @@ def _clean_bool_map(value: Any) -> dict[str, bool]:
     if not isinstance(value, dict):
         return {}
     out: dict[str, bool] = {}
-    for key, raw in list(value.items())[:_MAX_MAP_ITEMS]:
+    for key, raw in list(cast(dict[Any, Any], value).items())[:_MAX_MAP_ITEMS]:
         cleaned_key = _clean_string(key)
         if cleaned_key is None:
             continue
@@ -91,7 +92,7 @@ def _clean_title_overrides(value: Any) -> dict[str, str]:
     if not isinstance(value, dict):
         return {}
     out: dict[str, str] = {}
-    for key, raw_title in list(value.items())[:_MAX_MAP_ITEMS]:
+    for key, raw_title in list(cast(dict[Any, Any], value).items())[:_MAX_MAP_ITEMS]:
         cleaned_key = _clean_string(key)
         cleaned_title = _clean_string(raw_title, max_len=_MAX_TITLE_LEN)
         if cleaned_key is None or cleaned_title is None:
@@ -104,7 +105,7 @@ def _clean_tags_by_key(value: Any) -> dict[str, list[str]]:
     if not isinstance(value, dict):
         return {}
     out: dict[str, list[str]] = {}
-    for key, raw_tags in list(value.items())[:_MAX_MAP_ITEMS]:
+    for key, raw_tags in list(cast(dict[Any, Any], value).items())[:_MAX_MAP_ITEMS]:
         cleaned_key = _clean_string(key)
         if cleaned_key is None:
             continue
@@ -115,16 +116,17 @@ def _clean_tags_by_key(value: Any) -> dict[str, list[str]]:
 
 
 def _clean_view(value: Any) -> dict[str, Any]:
-    default = default_webui_sidebar_state()["view"]
+    default: dict[str, Any] = default_webui_sidebar_state()["view"]
     if not isinstance(value, dict):
         return dict(default)
-    density = value.get("density")
-    sort = value.get("sort")
+    view = cast(dict[str, Any], value)
+    density = view.get("density")
+    sort = view.get("sort")
     return {
         "density": density if density in _ALLOWED_DENSITIES else default["density"],
-        "show_previews": bool(value.get("show_previews", default["show_previews"])),
-        "show_timestamps": bool(value.get("show_timestamps", default["show_timestamps"])),
-        "show_archived": bool(value.get("show_archived", default["show_archived"])),
+        "show_previews": bool(view.get("show_previews", default["show_previews"])),
+        "show_timestamps": bool(view.get("show_timestamps", default["show_timestamps"])),
+        "show_archived": bool(view.get("show_archived", default["show_archived"])),
         "sort": sort if sort in _ALLOWED_SORTS else default["sort"],
     }
 
@@ -133,9 +135,11 @@ def normalize_webui_sidebar_state(raw: Any) -> dict[str, Any]:
     """Return a schema-v1 sidebar state from any older/partial input."""
     if not isinstance(raw, dict):
         raw = {}
+    raw = cast(dict[str, Any], raw)
     state = default_webui_sidebar_state()
     state["pinned_keys"] = _clean_string_list(raw.get("pinned_keys"))
     state["archived_keys"] = _clean_string_list(raw.get("archived_keys"))
+    state["session_order"] = _clean_string_list(raw.get("session_order"))
     state["title_overrides"] = _clean_title_overrides(raw.get("title_overrides"))
     state["project_name_overrides"] = _clean_title_overrides(
         raw.get("project_name_overrides")
