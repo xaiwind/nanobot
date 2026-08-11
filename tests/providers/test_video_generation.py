@@ -20,7 +20,7 @@ class FakeVideoResponse:
         self._payload = payload
         self.status_code = status_code
         self.text = str(payload)
-        self.request = httpx.Request("POST", "https://api.x.ai/v1/videos/generations")
+        self.request = httpx.Request("POST", "https://cli-chat-proxy.grok.com/v1/videos/generations")
 
     def json(self) -> dict[str, Any]:
         return self._payload

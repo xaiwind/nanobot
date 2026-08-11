@@ -1474,15 +1474,15 @@ async def test_generate_uses_oauth_token():
         return_value=fake_token,
     ):
         result = await XAIGrokImageGenerationClient(api_key=None).generate(
-            prompt="a cat", model="grok-2-image-1212", client=client
+            prompt="a cat", model="grok-imagine-image", client=client
         )
 
     assert result.images
     call = client.calls[0]
-    assert call["url"] == "https://api.x.ai/v1/images/generations"
+    assert call["url"] == "https://cli-chat-proxy.grok.com/v1/images/generations"
     assert call["headers"]["Authorization"] == "Bearer tok-abc"
     body = call["json"]
-    assert body["model"] == "grok-2-image-1212"
+    assert body["model"] == "grok-imagine-image"
     assert "size" not in body
 
 # --- generate: oauth fails, uses api_key fallback ---
@@ -1498,7 +1498,7 @@ async def test_generate_falls_back_to_api_key():
         side_effect=Exception("no token"),
     ):
         result = await XAIGrokImageGenerationClient(api_key="sk-fallback").generate(
-            prompt="a cat", model="grok-2-image-1212", client=client
+            prompt="a cat", model="grok-imagine-image", client=client
         )
 
     assert result.images
@@ -1514,7 +1514,7 @@ async def test_generate_raises_when_no_auth():
     ):
         with pytest.raises(ImageGenerationError, match="xAI Grok"):
             await XAIGrokImageGenerationClient(api_key=None).generate(
-                prompt="a cat", model="grok-2-image-1212"
+                prompt="a cat", model="grok-imagine-image"
             )
 
 # --- aspect_ratio and resolution in body ---
@@ -1532,7 +1532,7 @@ async def test_generate_sends_aspect_ratio_and_resolution():
     ):
         await XAIGrokImageGenerationClient(api_key=None).generate(
             prompt="a cat",
-            model="grok-2-image-1212",
+            model="grok-imagine-image",
             aspect_ratio="16:9",
             image_size="1K",
             client=client,

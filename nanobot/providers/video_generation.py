@@ -77,13 +77,17 @@ async def _download_bytes(url: str, headers: dict[str, str]) -> bytes:
 class XAIGrokVideoGenerationClient(VideoGenerationProvider):
     """xAI Grok text-to-video via OAuth or API key.
 
-    Submits to api.x.ai/v1/videos/generations, polls until done, downloads.
+    Submits to the Grok subscription proxy, polls until done, downloads.
+
+    The subscription proxy is used rather than api.x.ai because an X Premium /
+    Grok subscription covers video generation there, while api.x.ai bills the
+    separate developer account and rejects subscription-only users.
     """
 
     provider_name = "xai_grok"
 
     def _default_base_url(self) -> str:
-        return "https://api.x.ai/v1"
+        return "https://cli-chat-proxy.grok.com/v1"
 
     async def _get_bearer(self) -> str:
         from nanobot.providers.xai_oauth import get_xai_oauth_token
@@ -145,7 +149,13 @@ class XAIGrokVideoGenerationClient(VideoGenerationProvider):
                 f"xAI Grok video submit failed (HTTP {post_resp.status_code}): {post_resp.text[:500]}"
             ) from exc
 
-        request_id = post_resp.json()["id"]
+        submit_payload = post_resp.json()
+        # The subscription proxy returns "request_id"; keep "id" for compatibility.
+        request_id = submit_payload.get("request_id") or submit_payload.get("id")
+        if not request_id:
+            raise VideoGenerationError(
+                f"xAI Grok video submit returned no request id: {str(submit_payload)[:300]}"
+            )
         logger.info("xAI Grok video generation submitted: request_id={}", request_id)
 
         # Poll

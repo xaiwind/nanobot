@@ -1131,6 +1131,19 @@ class CustomImageGenerationClient(ImageGenerationProvider):
                 return requested
         return _openai_size("gpt-image-2", aspect_ratio, None)
 
+    @staticmethod
+    def _custom_is_xai_grok(model: str) -> bool:
+        """True for xAI Grok image models (grok-imagine / grok-2-image / grok-3-image …).
+
+        xAI's Images API rejects the OpenAI ``size`` parameter and expects
+        ``aspect_ratio`` (+ optional ``resolution``) instead. Detect by model name
+        so the generic custom provider can route the right payload shape.
+        """
+        m = model.strip().lower()
+        if not m.startswith("grok-"):
+            return False
+        return "imagine" in m or "image" in m
+
     async def generate(
         self,
         *,
@@ -1163,8 +1176,16 @@ class CustomImageGenerationClient(ImageGenerationProvider):
             "prompt": prompt,
             "response_format": "b64_json",
             "n": 1,
-            "size": self._custom_size(aspect_ratio, image_size),
         }
+        if self._custom_is_xai_grok(model):
+            # xAI protocol: aspect_ratio (+ resolution), never `size`.
+            if aspect_ratio:
+                body["aspect_ratio"] = aspect_ratio
+            resolution = XAIGrokImageGenerationClient._xai_resolution(image_size)
+            if resolution:
+                body["resolution"] = resolution
+        else:
+            body["size"] = self._custom_size(aspect_ratio, image_size)
         body.update(self.extra_body)
 
         logger.info("Custom Images API request: POST {}/images/generations body={}", self.api_base, body)
@@ -1952,18 +1973,23 @@ class ModelScopeImageGenerationClient(ImageGenerationProvider):
 class XAIGrokImageGenerationClient(ImageGenerationProvider):
     """xAI Grok image generation via OAuth or API key.
 
-    Calls api.x.ai/v1/images/generations. Uses aspect_ratio + resolution
-    instead of the OpenAI size parameter, which xAI rejects.
+    Calls the Grok subscription proxy's /images/generations. Uses aspect_ratio +
+    resolution instead of the OpenAI size parameter, which xAI rejects.
+
+    The subscription proxy is used rather than api.x.ai because an X Premium /
+    Grok subscription covers image generation there, while api.x.ai bills the
+    separate developer account and rejects subscription-only users.
     """
 
     provider_name = "xai_grok"
-    model_options = ("grok-2-image-1212", "grok-imagine")
+    # "grok-imagine" and "grok-2-image-1212" are not served here and return 404.
+    model_options = ("grok-imagine-image", "grok-imagine-image-quality")
     missing_key_message = (
         "xAI Grok: re-login or set an API Key in Grok settings"
     )
 
     def _default_base_url(self) -> str:
-        return "https://api.x.ai/v1"
+        return "https://cli-chat-proxy.grok.com/v1"
 
     def _resolve_base_url(self, api_base: str | None) -> str:
         if api_base:
