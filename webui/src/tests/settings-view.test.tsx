@@ -384,6 +384,15 @@ async function togglePresetEditor(name = "primary") {
 }
 
 async function chooseProviderToConfigure(label: string) {
+  // Pending OAuth providers are listed directly; everything else sits in the add menu.
+  const listedRow = screen.queryByRole("button", {
+    name: new RegExp(`^${label}`),
+    expanded: false,
+  });
+  if (listedRow) {
+    fireEvent.click(listedRow);
+    return;
+  }
   fireEvent.pointerDown(
     await screen.findByRole("button", { name: "Add your own model provider" }),
   );
@@ -2402,6 +2411,101 @@ describe("SettingsView Apps catalog", () => {
     expect(screen.queryByText("Default")).not.toBeInTheDocument();
   });
 
+  it("lists unconfigured OAuth providers as pending rows instead of hiding them", async () => {
+    const base = settingsPayload();
+    const payload: SettingsPayload = {
+      ...base,
+      providers: [
+        {
+          name: "deepseek",
+          label: "DeepSeek",
+          configured: true,
+          auth_type: "api_key",
+          api_key_required: true,
+          api_key_hint: "sk-***",
+          api_base: "https://api.deepseek.com",
+          default_api_base: "https://api.deepseek.com",
+        },
+        {
+          name: "xai_grok",
+          label: "xAI Grok",
+          configured: false,
+          auth_type: "oauth",
+          api_key_required: false,
+          api_key_hint: null,
+          api_base: null,
+          default_api_base: "https://cli-chat-proxy.grok.com/v1",
+          oauth_account: null,
+          oauth_login_supported: true,
+        },
+        {
+          name: "anthropic",
+          label: "Anthropic",
+          configured: false,
+          auth_type: "api_key",
+          api_key_required: true,
+          api_key_hint: null,
+          api_base: null,
+          default_api_base: "https://api.anthropic.com",
+        },
+      ],
+    };
+
+    renderSettingsView({ initialSection: "models", initialSettings: payload });
+
+    // The pending OAuth provider is reachable without opening the add-provider menu.
+    const pendingRow = await screen.findByTestId("provider-row-xai_grok");
+    expect(within(pendingRow).getByText("xAI Grok")).toBeInTheDocument();
+    expect(within(pendingRow).getByText("Not signed in")).toBeInTheDocument();
+
+    // An unconfigured API-key provider stays behind the add-provider menu.
+    expect(screen.queryByTestId("provider-row-anthropic")).not.toBeInTheDocument();
+
+    // Expanding the pending row exposes the sign-in action directly.
+    fireEvent.click(within(pendingRow).getByRole("button", { name: /xAI Grok/ }));
+    expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
+  });
+
+  it("keeps pending OAuth providers out of the add-provider menu", async () => {
+    const base = settingsPayload();
+    const payload: SettingsPayload = {
+      ...base,
+      providers: [
+        {
+          name: "xai_grok",
+          label: "xAI Grok",
+          configured: false,
+          auth_type: "oauth",
+          api_key_required: false,
+          api_key_hint: null,
+          api_base: null,
+          default_api_base: "https://cli-chat-proxy.grok.com/v1",
+          oauth_account: null,
+          oauth_login_supported: true,
+        },
+        {
+          name: "anthropic",
+          label: "Anthropic",
+          configured: false,
+          auth_type: "api_key",
+          api_key_required: true,
+          api_key_hint: null,
+          api_base: null,
+          default_api_base: "https://api.anthropic.com",
+        },
+      ],
+    };
+
+    renderSettingsView({ initialSection: "models", initialSettings: payload });
+
+    fireEvent.pointerDown(
+      await screen.findByRole("button", { name: "Add your own model provider" }),
+    );
+
+    expect(await screen.findByRole("menuitem", { name: "Anthropic" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "xAI Grok" })).not.toBeInTheDocument();
+  });
+
   it("signs in to the xAI Grok provider", async () => {
     const base = settingsPayload();
     const xaiProvider = {
@@ -2712,7 +2816,7 @@ describe("SettingsView Apps catalog", () => {
     );
     await waitFor(() => expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled());
 
-    fireEvent.click(screen.getByRole("button", { name: "xAI Grok" }));
+    fireEvent.click(screen.getByRole("button", { name: /^xAI Grok/ }));
     await chooseProviderToConfigure("OpenAI Codex");
     fireEvent.click(screen.getByRole("button", { name: "Advanced options" }));
     const codexProxy = screen.getByLabelText("Network proxy");

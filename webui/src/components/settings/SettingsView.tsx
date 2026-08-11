@@ -4167,11 +4167,23 @@ function ProvidersSettings({
     emptyCustomProviderDraft,
   );
   const configuredProviders = settings.providers.filter((provider) => provider.configured);
+  // OAuth providers cannot be set up by pasting a key, so keep them visible in the main
+  // list as pending rows rather than hiding them behind the add-provider menu.
+  const pendingOauthProviders = useMemo(
+    () =>
+      orderUnconfiguredProviders(
+        settings.providers.filter((provider) => isPendingOauthProvider(provider)),
+      ),
+    [settings.providers],
+  );
   const unconfiguredProviders = useMemo(
     () =>
       orderUnconfiguredProviders(
         settings.providers.filter(
-          (provider) => !provider.configured && provider.name !== "custom",
+          (provider) =>
+            !provider.configured
+            && provider.name !== "custom"
+            && !isPendingOauthProvider(provider),
         ),
       ),
     [settings.providers],
@@ -4244,22 +4256,39 @@ function ProvidersSettings({
     const supportFeature = supportName
       ? (nanobotFeatures?.features ?? []).find((feature) => feature.name === supportName)
       : null;
+    const pendingOauth = isPendingOauthProvider(provider);
     return (
-      <div key={provider.name} className="divide-y divide-border/45">
+      <div
+        key={provider.name}
+        data-testid={`provider-row-${provider.name}`}
+        className="divide-y divide-border/45"
+      >
         <button
           type="button"
           aria-expanded={expanded}
           onClick={() => toggleProvider(provider.name)}
           className="flex min-h-[70px] w-full items-center justify-between gap-4 px-4 py-3 text-left transition-colors hover:bg-muted/35 sm:px-5"
         >
-          <span className="flex min-w-0 items-center gap-3">
+          <span
+            className={cn(
+              "flex min-w-0 items-center gap-3",
+              pendingOauth && !expanded && "opacity-60",
+            )}
+          >
             <ProviderIcon
               provider={provider.name}
               showBrandLogos={showBrandLogos}
             />
             <span className="min-w-0">
-              <span className="block truncate text-[15px] font-semibold leading-5 text-foreground">
-                {provider.label}
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-[15px] font-semibold leading-5 text-foreground">
+                  {provider.label}
+                </span>
+                {pendingOauth ? (
+                  <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    {tx("settings.oauth.notSignedIn", "Not signed in")}
+                  </span>
+                ) : null}
               </span>
               {provider.api_base ? (
                 <span className="block truncate text-[12px] text-muted-foreground">
@@ -4530,11 +4559,11 @@ function ProvidersSettings({
                         <span className="w-24 shrink-0">{t("settings.actions.model")}</span>
                         <select
                           className="flex-1 rounded border px-2 py-1 text-sm"
-                          value={imageGenerationForm.model ?? "grok-2-image-1212"}
+                          value={imageGenerationForm.model ?? "grok-imagine-image"}
                           onChange={(e) => setImageGenerationForm((f) => ({ ...f, model: e.target.value }))}
                         >
-                          <option value="grok-2-image-1212">grok-2-image-1212</option>
-                          <option value="grok-imagine">grok-imagine</option>
+                          <option value="grok-imagine-image">grok-imagine-image</option>
+                          <option value="grok-imagine-image-quality">grok-imagine-image-quality</option>
                         </select>
                       </label>
                       <label className="flex items-center gap-2">
@@ -4808,6 +4837,7 @@ function ProvidersSettings({
         </SettingsSectionTitle>
         <SettingsGroup>
           {configuredProviders.map(renderProviderRow)}
+          {pendingOauthProviders.map(renderProviderRow)}
           {selectedUnconfiguredProvider
             ? renderProviderRow(selectedUnconfiguredProvider)
             : null}
@@ -9456,6 +9486,12 @@ function ThirdPartyBrandNotice() {
       })}
     </p>
   );
+}
+
+function isPendingOauthProvider(
+  provider: SettingsPayload["providers"][number],
+): boolean {
+  return provider.auth_type === "oauth" && !provider.configured;
 }
 
 function orderUnconfiguredProviders(
