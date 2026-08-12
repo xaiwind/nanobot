@@ -2246,13 +2246,15 @@ class XAIGrokImageGenerationClient(ImageGenerationProvider):
             ) from exc
 
         raw = response.json()
+        # GeneratedImageResponse.images is a list of data URLs, not raw bytes:
+        # the artifact store parses them with a string regex.
         images = [
-            base64.b64decode(item["b64_json"])
+            _b64_image_data_url(item["b64_json"])
             for item in raw.get("data", [])
             if item.get("b64_json")
         ]
         self._require_images(images, raw)
-        return GeneratedImageResponse(images=images, content=None, raw=raw)
+        return GeneratedImageResponse(images=images, content="", raw=raw)
 
 
 # ---------------------------------------------------------------------------

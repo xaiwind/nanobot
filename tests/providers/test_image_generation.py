@@ -1636,7 +1636,10 @@ async def test_generate_uses_oauth_token():
             prompt="a cat", model="grok-imagine-image", client=client
         )
 
-    assert result.images
+    # The artifact store parses these with a string regex, so they must be
+    # data URLs rather than the raw bytes the API returns.
+    assert result.images == [f"data:image/png;base64,{b64}"]
+    assert result.content == ""
     call = client.calls[0]
     assert call["url"] == "https://cli-chat-proxy.grok.com/v1/images/generations"
     assert call["headers"]["Authorization"] == "Bearer tok-abc"

@@ -18,6 +18,7 @@ from nanobot.providers.video_generation import (
 
 if TYPE_CHECKING:
     from nanobot.agent.tools.context import ToolContext
+    from nanobot.config.schema import ProviderConfig
 
 
 class VideoGenerationToolConfig(Base):
@@ -50,45 +51,78 @@ class VideoGenerationToolConfig(Base):
     )
 )
 class VideoGenerationTool(Tool):
-    name = "generate_video"
-    description = "Generate a short video clip from a text prompt using xAI Grok."
+    """Generate short video clips through the configured video provider."""
+
     config_key = "video_generation"
 
     @classmethod
-    def config_class(cls) -> type[VideoGenerationToolConfig]:
+    def config_cls(cls) -> type[VideoGenerationToolConfig]:
         return VideoGenerationToolConfig
 
-    def is_enabled(self, ctx: ToolContext) -> bool:
+    @classmethod
+    def enabled(cls, ctx: ToolContext) -> bool:
         return ctx.config.video_generation.enabled
 
-    async def run(self, ctx: ToolContext, **kwargs: Any) -> ToolResult:
-        config = ctx.config.video_generation
-        provider_cls = get_video_gen_provider(config.provider)
+    @classmethod
+    def create(cls, ctx: ToolContext) -> Tool:
+        # xAI video and image generation both read providers.xai_grok, so the
+        # image provider configs already carry the credential this tool needs.
+        return cls(
+            config=ctx.config.video_generation,
+            provider_configs=ctx.image_generation_provider_configs,
+        )
+
+    def __init__(
+        self,
+        *,
+        config: VideoGenerationToolConfig,
+        provider_configs: dict[str, ProviderConfig] | None = None,
+    ) -> None:
+        self.config = config
+        self.provider_configs = dict(provider_configs or {})
+
+    @property
+    def name(self) -> str:
+        return "generate_video"
+
+    @property
+    def description(self) -> str:
+        return "Generate a short video clip from a text prompt using xAI Grok."
+
+    async def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self,
+        prompt: str,
+        duration: int | None = None,
+        aspect_ratio: str | None = None,
+        **kwargs: Any,
+    ) -> str:
+        provider_cls = get_video_gen_provider(self.config.provider)
         if provider_cls is None:
-            return ToolResult.error(f"Unknown video generation provider: {config.provider!r}")
+            return ToolResult.error(
+                f"Unknown video generation provider: {self.config.provider!r}"
+            )
 
-        prompt: str = kwargs["prompt"]
-        duration: int = kwargs.get("duration") or config.default_duration
-        aspect_ratio: str = kwargs.get("aspect_ratio") or config.default_aspect_ratio
-
-        xai_config = ctx.config.providers.xai_grok
-        provider = provider_cls(api_key=xai_config.api_key)
-
-        save_dir = str(get_media_dir(ctx.config) / config.save_dir)
+        provider_config = self.provider_configs.get(self.config.provider)
+        provider = provider_cls(
+            api_key=provider_config.api_key if provider_config else None,
+            api_base=provider_config.api_base if provider_config else None,
+        )
+        save_dir = str(get_media_dir() / self.config.save_dir)
 
         try:
             result = await provider.generate(
                 prompt=prompt,
-                model=config.model,
-                duration=duration,
-                aspect_ratio=aspect_ratio,
-                resolution=config.default_resolution,
+                model=self.config.model,
+                duration=duration or self.config.default_duration,
+                aspect_ratio=aspect_ratio or self.config.default_aspect_ratio,
+                resolution=self.config.default_resolution,
                 save_dir=save_dir,
             )
-        except VideoGenerationError as exc:
-            return ToolResult.error(str(exc))
+        except (VideoGenerationError, OSError) as exc:
+            return ToolResult.error(f"Error: {exc}")
 
         logger.info("Video generated: {}", result.local_path)
-        return ToolResult.text(
-            f"Video saved to `{result.local_path}` ({result.duration}s, model: {result.model})"
+        return (
+            f"Video saved to `{result.local_path}` "
+            f"({result.duration}s, model: {result.model})"
         )
