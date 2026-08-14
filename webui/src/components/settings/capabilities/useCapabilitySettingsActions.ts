@@ -59,7 +59,6 @@ export function useCapabilitySettingsActions({
     networkSafetySaving,
     setImageGenerationSaving,
     setNetworkSafetySaving,
-    setVideoGenerationForm: _setVideoGenerationForm,
     setVideoGenerationSaving,
     videoGenerationForm,
     videoGenerationSaving,
