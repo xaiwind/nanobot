@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import QRCode from "qrcode";
 import { Check, Loader2, Network, RotateCcw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -97,12 +96,18 @@ export function ChannelQrConnectFlow({
       setQrDataUrl("");
       return;
     }
+    const qrUrl = connect.qr_url;
     let cancelled = false;
-    void QRCode.toDataURL(connect.qr_url, {
-      width: 184,
-      margin: 1,
-      color: { dark: "#111827", light: "#ffffff" },
-    })
+    // `qrcode` is ~73 kB and only this panel needs it, so it stays out of the
+    // entry chunk and loads when a QR pairing flow actually opens.
+    void import("qrcode")
+      .then(({ default: QRCode }) =>
+        QRCode.toDataURL(qrUrl, {
+          width: 184,
+          margin: 1,
+          color: { dark: "#111827", light: "#ffffff" },
+        }),
+      )
       .then((url) => {
         if (!cancelled) setQrDataUrl(url);
       })

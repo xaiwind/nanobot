@@ -1,7 +1,8 @@
 import "@testing-library/jest-dom/vitest";
 import { beforeEach } from "vitest";
 
-import i18n from "@/i18n";
+import i18n, { i18nReady } from "@/i18n";
+import { resources } from "@/i18n/resources";
 
 function createTestStorage(): Storage {
   const store = new Map<string, string>();
@@ -51,6 +52,15 @@ if (!("randomUUID" in globalThis.crypto)) {
       }),
     configurable: true,
   });
+}
+
+// Production loads one locale chunk at a time. Tests switch languages freely
+// and assert across all of them, so register every bundle up front.
+await i18nReady;
+for (const [locale, namespaces] of Object.entries(resources)) {
+  for (const [namespace, resource] of Object.entries(namespaces)) {
+    i18n.addResourceBundle(locale, namespace, resource, true, true);
+  }
 }
 
 beforeEach(async () => {

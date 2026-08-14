@@ -14,56 +14,75 @@ import {
   normalizeLocale,
   persistLocale,
   resolveInitialLocale,
+  supportedLocales,
   type SupportedLocale,
 } from "./config";
 
-import enCommon from "./locales/en/common.json";
-import zhCNCommon from "./locales/zh-CN/common.json";
-import zhTWCommon from "./locales/zh-TW/common.json";
-import frCommon from "./locales/fr/common.json";
-import jaCommon from "./locales/ja/common.json";
-import koCommon from "./locales/ko/common.json";
-import esCommon from "./locales/es/common.json";
-import ptBRCommon from "./locales/pt-BR/common.json";
-import viCommon from "./locales/vi/common.json";
-import idCommon from "./locales/id/common.json";
+type LocaleResource = Record<string, unknown>;
 
-export const resources = {
-  en: { common: enCommon, ...channelLocaleResources("en") },
-  "zh-CN": { common: zhCNCommon, ...channelLocaleResources("zh-CN") },
-  "zh-TW": { common: zhTWCommon, ...channelLocaleResources("zh-TW") },
-  fr: { common: frCommon, ...channelLocaleResources("fr") },
-  ja: { common: jaCommon, ...channelLocaleResources("ja") },
-  ko: { common: koCommon, ...channelLocaleResources("ko") },
-  es: { common: esCommon, ...channelLocaleResources("es") },
-  "pt-BR": { common: ptBRCommon, ...channelLocaleResources("pt-BR") },
-  vi: { common: viCommon, ...channelLocaleResources("vi") },
-  id: { common: idCommon, ...channelLocaleResources("id") },
-} as const;
+// Each `common.json` weighs 35-56 kB. Importing all ten statically parked
+// ~450 kB of translations nobody reads in the entry chunk, so every locale is
+// its own chunk fetched on demand. `./resources.ts` keeps the eager copy for
+// tests; importing it from app code would undo this.
+const localeLoaders = import.meta.glob<{ default: LocaleResource }>(
+  "./locales/*/common.json",
+);
+
+const registeredLocales = new Set<SupportedLocale>();
+
+/** Fetch one locale bundle and hand its namespaces to i18next. */
+export async function loadLocaleResources(locale: SupportedLocale): Promise<void> {
+  if (registeredLocales.has(locale)) return;
+  const loadLocale = localeLoaders[`./locales/${locale}/common.json`];
+  if (!loadLocale) {
+    throw new Error(`missing locale bundle for ${locale}`);
+  }
+  const { default: common } = await loadLocale();
+  i18n.addResourceBundle(locale, "common", common, true, true);
+  for (const [namespace, resource] of Object.entries(channelLocaleResources(locale))) {
+    i18n.addResourceBundle(locale, namespace, resource, true, true);
+  }
+  registeredLocales.add(locale);
+}
+
+const initialLocale = resolveInitialLocale();
+
+const initialized: Promise<unknown> = i18n.isInitialized
+  ? Promise.resolve()
+  : i18n
+      .use(initReactI18next)
+      .init({
+        resources: {},
+        lng: initialLocale,
+        fallbackLng: fallbackLocale,
+        defaultNS: "common",
+        ns: ["common", ...channelLocaleNamespaces()],
+        interpolation: {
+          escapeValue: false,
+        },
+        returnNull: false,
+        supportedLngs: supportedLocales.map((locale) => locale.code),
+      });
+
+/**
+ * Resolves once the active locale — plus the English fallback it defers to —
+ * are in memory. `main.tsx` waits on this so the first paint never flashes
+ * raw translation keys.
+ */
+export const i18nReady: Promise<void> = initialized.then(async () => {
+  await loadLocaleResources(initialLocale);
+  if (initialLocale !== fallbackLocale) {
+    await loadLocaleResources(fallbackLocale);
+  }
+});
 
 export function currentLocale(): SupportedLocale {
   return normalizeLocale(i18n.resolvedLanguage ?? i18n.language ?? defaultLocale);
 }
 
 export async function setAppLanguage(locale: SupportedLocale): Promise<void> {
+  await loadLocaleResources(locale);
   await i18n.changeLanguage(locale);
-}
-
-if (!i18n.isInitialized) {
-  void i18n
-    .use(initReactI18next)
-    .init({
-      resources,
-      lng: resolveInitialLocale(),
-      fallbackLng: fallbackLocale,
-      defaultNS: "common",
-      ns: ["common", ...channelLocaleNamespaces()],
-      interpolation: {
-        escapeValue: false,
-      },
-      returnNull: false,
-      supportedLngs: Object.keys(resources),
-    });
 }
 
 const syncLocaleSideEffects = (language: string) => {

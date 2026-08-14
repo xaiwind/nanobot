@@ -2,7 +2,7 @@ import ReactDOM from "react-dom/client";
 
 import App from "./App";
 import "./globals.css";
-import "./i18n";
+import { i18nReady } from "./i18n";
 import { initializeLoopbackRuntimeHost } from "./lib/runtime";
 
 // `crypto.randomUUID` is only defined in secure contexts (HTTPS or localhost).
@@ -27,4 +27,9 @@ if (!root) throw new Error("root element missing");
 initializeLoopbackRuntimeHost();
 
 /* StrictMode disabled: dev double-invokes state updaters; delta accumulation must stay pure — see useNanobotStream. */
-ReactDOM.createRoot(root).render(<App />);
+// Locale bundles load as separate chunks, so hold the first render until the
+// active language is in memory. A failed fetch still renders: untranslated
+// keys beat a blank screen.
+void i18nReady.catch(() => undefined).then(() => {
+  ReactDOM.createRoot(root).render(<App />);
+});

@@ -6,7 +6,12 @@ import { gzipSync } from "node:zlib";
 
 const GZIP_MIN_BYTES = 4 * 1024;
 const GZIP_ASSET_PATTERN = /\.(?:css|html|js|json|mjs|svg)$/i;
-const LAZY_FEATURE_CHUNK_PREFIXES = ["markdown-vendor-", "syntax-highlight-", "katex-"];
+const LAZY_FEATURE_CHUNK_PREFIXES = [
+  "markdown-vendor-",
+  "syntax-highlight-",
+  "katex-",
+  "locale-",
+];
 
 export function entryLazyFeatureImports(imports: string[]): string[] {
   return imports.filter((fileName) =>
@@ -59,6 +64,12 @@ export function gzipWebuiAssets(): Plugin {
 }
 
 export function webuiManualChunk(id: string): string | undefined {
+  // One chunk per locale so a session downloads only the language it renders.
+  // The entry-chunk guard above fails the build if these ever become static.
+  const locale = /src\/i18n\/locales\/([^/]+)\/common\.json$/.exec(id)?.[1];
+  if (locale) {
+    return `locale-${locale}`;
+  }
   if (
     id.includes("node_modules/react/")
     || id.includes("node_modules/react-dom/")

@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
-import { resources } from "@/i18n";
+import { resources } from "@/i18n/resources";
 import {
   LOCALE_STORAGE_KEY,
   resolveInitialLocale,
