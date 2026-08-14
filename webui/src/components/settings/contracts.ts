@@ -5,6 +5,7 @@ export type SettingsSectionKey =
   | "appearance"
   | "models"
   | "image"
+  | "video"
   | "voice"
   | "browser"
   | "channels"
@@ -14,7 +15,7 @@ export type SettingsSectionKey =
   | "runtime"
   | "advanced";
 
-export type PendingRestartSection = "runtime" | "browser" | "image";
+export type PendingRestartSection = "runtime" | "browser" | "image" | "video";
 export type PendingRestartSections = Record<PendingRestartSection, boolean>;
 
 export type RestartAwarePayload = {

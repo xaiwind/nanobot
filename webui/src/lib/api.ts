@@ -37,6 +37,7 @@ import type {
   SlashCommand,
   SlashCommandLifecycle,
   TranscriptionSettingsUpdate,
+  VideoGenerationSettingsUpdate,
   WebSearchSettingsUpdate,
   WorkspacesPayload,
   WebuiThreadPersistedPayload,
@@ -1058,6 +1059,23 @@ export async function updateImageGenerationSettings(
       default_aspect_ratio: update.defaultAspectRatio,
       default_image_size: update.defaultImageSize,
       max_images_per_turn: update.maxImagesPerTurn,
+    },
+  );
+}
+
+export async function updateVideoGenerationSettings(
+  transport: WebUIMutationTransport,
+  update: VideoGenerationSettingsUpdate,
+): Promise<SettingsPayload> {
+  return mutation<SettingsPayload>(
+    transport,
+    "settings.video_generation.update",
+    {
+      enabled: update.enabled,
+      model: update.model,
+      default_duration: update.defaultDuration,
+      default_aspect_ratio: update.defaultAspectRatio,
+      default_resolution: update.defaultResolution,
     },
   );
 }

@@ -2,6 +2,7 @@ import { ChevronLeft, Loader2 } from "lucide-react";
 
 import { SkillsCatalogSettings } from "@/components/settings/SkillsCatalogSettings";
 import { ImageGenerationSettings } from "@/components/settings/capabilities/ImageGenerationSettings";
+import { VideoGenerationSettings } from "@/components/settings/capabilities/VideoGenerationSettings";
 import { AdvancedSettings } from "@/components/settings/capabilities/SecuritySettings";
 import { TranscriptionSettings } from "@/components/settings/capabilities/TranscriptionSettings";
 import { WebSettings } from "@/components/settings/capabilities/WebSettings";
@@ -114,6 +115,9 @@ export function SettingsPage({
     imageGenerationDirty,
     imageGenerationForm,
     imageGenerationSaving,
+    videoGenerationDirty,
+    videoGenerationForm,
+    videoGenerationSaving,
     installCapabilities,
     loading,
     localPrefs,
@@ -157,6 +161,7 @@ export function SettingsPage({
     restartViaSettingsSurface,
     runProviderOAuth,
     saveImageGenerationSettings,
+    saveVideoGenerationSettings,
     saveModelSettings,
     saveNetworkSafetySettings,
     saveProvider,
@@ -177,6 +182,7 @@ export function SettingsPage({
     setCustomMcpForm,
     setForm,
     setImageGenerationForm,
+    setVideoGenerationForm,
     setLocalPrefs,
     setMcpConfigImport,
     setMcpError,
@@ -317,6 +323,20 @@ export function SettingsPage({
             onRestart={restartViaSettingsSurface}
             isRestarting={isRestarting || hostEngineApplying}
             requiresRestartPending={pendingRestartSections.image}
+          />
+        );
+      case "video":
+        return (
+          <VideoGenerationSettings
+            settings={settings}
+            form={videoGenerationForm}
+            dirty={videoGenerationDirty}
+            saving={videoGenerationSaving}
+            onChangeForm={setVideoGenerationForm}
+            onSave={saveVideoGenerationSettings}
+            onRestart={restartViaSettingsSurface}
+            isRestarting={isRestarting || hostEngineApplying}
+            requiresRestartPending={pendingRestartSections.video}
           />
         );
       case "voice":

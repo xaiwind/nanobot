@@ -1299,6 +1299,19 @@ class CustomImageGenerationClient(ImageGenerationProvider):
                 return requested
         return _openai_size("gpt-image-2", aspect_ratio, None)
 
+    @staticmethod
+    def _custom_is_xai_grok(model: str) -> bool:
+        """True for xAI Grok image models (grok-imagine / grok-2-image / grok-3-image …).
+
+        xAI's Images API rejects the OpenAI ``size`` parameter and expects
+        ``aspect_ratio`` (+ optional ``resolution``) instead. Detect by model name
+        so the generic custom provider can route the right payload shape.
+        """
+        m = model.strip().lower()
+        if not m.startswith("grok-"):
+            return False
+        return "imagine" in m or "image" in m
+
     async def generate(
         self,
         *,
@@ -1331,8 +1344,16 @@ class CustomImageGenerationClient(ImageGenerationProvider):
             "prompt": prompt,
             "response_format": "b64_json",
             "n": 1,
-            "size": self._custom_size(aspect_ratio, image_size),
         }
+        if self._custom_is_xai_grok(model):
+            # xAI protocol: aspect_ratio (+ resolution), never `size`.
+            if aspect_ratio:
+                body["aspect_ratio"] = aspect_ratio
+            resolution = XAIGrokImageGenerationClient._xai_resolution(image_size)
+            if resolution:
+                body["resolution"] = resolution
+        else:
+            body["size"] = self._custom_size(aspect_ratio, image_size)
         body.update(self.extra_body)
 
         logger.info("Custom Images API request: POST {}/images/generations body={}", self.api_base, body)
@@ -2112,6 +2133,130 @@ class ModelScopeImageGenerationClient(ImageGenerationProvider):
         return images
 
 
+class XAIGrokImageGenerationClient(ImageGenerationProvider):
+    """xAI Grok image generation via OAuth or API key.
+
+    Calls the Grok subscription proxy's /images/generations. Uses aspect_ratio +
+    resolution instead of the OpenAI size parameter, which xAI rejects.
+
+    The subscription proxy is used rather than api.x.ai because an X Premium /
+    Grok subscription covers image generation there, while api.x.ai bills the
+    separate developer account and rejects subscription-only users.
+    """
+
+    provider_name = "xai_grok"
+    # "grok-imagine" and "grok-2-image-1212" are not served here and return 404.
+    model_options = ("grok-imagine-image", "grok-imagine-image-quality")
+    missing_key_message = (
+        "xAI Grok: re-login or set an API Key in Grok settings"
+    )
+
+    def _default_base_url(self) -> str:
+        return "https://cli-chat-proxy.grok.com/v1"
+
+    def _resolve_base_url(self, api_base: str | None) -> str:
+        if api_base:
+            return api_base.rstrip("/")
+        return self._default_base_url()
+
+    @staticmethod
+    def _xai_resolution(image_size: str | None) -> str | None:
+        if not image_size:
+            return None
+        s = image_size.strip().lower()
+        if s in {"1k", "2k"}:
+            return s
+        if s in {"1024x1024", "1024"}:
+            return "1k"
+        if s in {"2048x2048", "2048"}:
+            return "2k"
+        return None
+
+    async def _get_bearer(self) -> str:
+        from nanobot.providers.xai_oauth import get_xai_oauth_token
+
+        try:
+            token = await asyncio.to_thread(get_xai_oauth_token)
+            if token and token.access:
+                return token.access
+        except Exception:
+            pass
+        if self.api_key:
+            return self.api_key
+        raise ImageGenerationError(self.missing_key_message)
+
+    async def generate(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        reference_images: list[str] | None = None,
+        aspect_ratio: str | None = None,
+        image_size: str | None = None,
+        client: httpx.AsyncClient | None = None,
+    ) -> GeneratedImageResponse:
+        bearer = await self._get_bearer()
+
+        if reference_images:
+            logger.warning(
+                "xAI Grok image generation does not support reference images; "
+                "ignoring {} reference image(s)",
+                len(reference_images),
+            )
+
+        headers = {
+            "Authorization": f"Bearer {bearer}",
+            "Content-Type": "application/json",
+            **self.extra_headers,
+        }
+        body: dict[str, Any] = {
+            "model": model,
+            "prompt": prompt,
+            "n": 1,
+            "response_format": "b64_json",
+        }
+        if aspect_ratio:
+            body["aspect_ratio"] = aspect_ratio
+        resolution = self._xai_resolution(image_size)
+        if resolution:
+            body["resolution"] = resolution
+        body.update(self.extra_body)
+
+        logger.info(
+            "xAI Grok Images API request: POST {}/images/generations body={}",
+            self.api_base,
+            {k: v for k, v in body.items() if k != "prompt"},
+        )
+
+        response = await self._http_post(
+            f"{self.api_base}/images/generations",
+            headers=headers,
+            body=body,
+            client=client,
+        )
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail = response.text[:1000]
+            logger.error(
+                "xAI Grok Images API error ({}): {}", response.status_code, detail
+            )
+            raise ImageGenerationError(
+                f"xAI Grok image generation failed (HTTP {response.status_code}): {detail}"
+            ) from exc
+
+        raw = response.json()
+        # GeneratedImageResponse.images is a list of data URLs, not raw bytes:
+        # the artifact store parses them with a string regex.
+        images = [
+            _b64_image_data_url(item["b64_json"])
+            for item in raw.get("data", [])
+            if item.get("b64_json")
+        ]
+        self._require_images(images, raw)
+        return GeneratedImageResponse(images=images, content="", raw=raw)
+
+
 # ---------------------------------------------------------------------------
 # Provider registration
 # ---------------------------------------------------------------------------
@@ -2125,5 +2270,6 @@ register_image_gen_provider(MiniMaxImageGenerationClient)
 register_image_gen_provider(OpenAIImageGenerationClient)
 register_image_gen_provider(OpenRouterImageGenerationClient)
 register_image_gen_provider(StepFunImageGenerationClient)
+register_image_gen_provider(XAIGrokImageGenerationClient)
 register_image_gen_provider(ZhipuImageGenerationClient)
 register_image_gen_provider(ModelScopeImageGenerationClient)

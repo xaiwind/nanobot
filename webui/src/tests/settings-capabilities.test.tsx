@@ -118,6 +118,38 @@ describe("Settings capabilities", () => {
     );
   });
 
+  it("saves video generation settings through the subscription login", async () => {
+    const base = settingsPayload();
+    const payload: SettingsPayload = {
+      ...base,
+      video_generation: { ...base.video_generation, enabled: true },
+    };
+    requestMutationMock.mockResolvedValueOnce({
+      ...payload,
+      video_generation: { ...payload.video_generation, default_duration: 8 },
+    });
+
+    renderSettingsView({ initialSection: "video", initialSettings: payload });
+
+    const duration = await screen.findByDisplayValue("5");
+    fireEvent.change(duration, { target: { value: "8" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(requestMutationMock).toHaveBeenCalledWith(
+        "settings.video_generation.update",
+        {
+          enabled: true,
+          model: "grok-imagine-video",
+          default_duration: 8,
+          default_aspect_ratio: "16:9",
+          default_resolution: "720p",
+        },
+        20_000,
+      ),
+    );
+  });
+
   it("saves optional-key web search providers without an API key", async () => {
     const payload = {
       ...settingsPayload(),

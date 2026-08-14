@@ -83,6 +83,15 @@ export function settingsPayload(): SettingsPayload {
       save_dir: "generated",
       providers: [],
     },
+    video_generation: {
+      enabled: false,
+      provider: "xai_grok",
+      model: "grok-imagine-video",
+      default_duration: 5,
+      default_aspect_ratio: "16:9",
+      default_resolution: "720p",
+      save_dir: "generated",
+    },
     runtime: {
       config_path: "/tmp/config.json",
       workspace_path: "/tmp/workspace",

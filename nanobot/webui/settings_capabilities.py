@@ -56,6 +56,7 @@ class CapabilitySettingsOperations:
     update_web_search: SettingsOperation
     update_api: SettingsOperation
     update_image: SettingsOperation
+    update_video: SettingsOperation
     update_transcription: SettingsOperation
     update_network: SettingsOperation
     nanobot_features_action: SettingsOperation
@@ -69,6 +70,7 @@ class CapabilitySettingsPayload(TypedDict):
     api: dict[str, Any]
     observability: dict[str, Any]
     image_generation: dict[str, Any]
+    video_generation: dict[str, Any]
     transcription: dict[str, Any]
 
 
@@ -215,6 +217,15 @@ def capability_settings_payload(
             "max_images_per_turn": image_config.max_images_per_turn,
             "save_dir": image_config.save_dir,
             "providers": image_providers,
+        },
+        "video_generation": {
+            "enabled": config.tools.video_generation.enabled,
+            "provider": config.tools.video_generation.provider,
+            "model": config.tools.video_generation.model,
+            "default_duration": config.tools.video_generation.default_duration,
+            "default_aspect_ratio": config.tools.video_generation.default_aspect_ratio,
+            "default_resolution": config.tools.video_generation.default_resolution,
+            "save_dir": config.tools.video_generation.save_dir,
         },
         "transcription": {
             "enabled": transcription.enabled,
@@ -497,6 +508,69 @@ def update_image_generation_settings(
     return changed
 
 
+def update_video_generation_settings(config: Config, query: QueryParams) -> bool:
+    video_config = config.tools.video_generation
+    changed = False
+
+    enabled = query_first(query, "enabled")
+    if enabled is not None:
+        parsed_enabled = parse_bool(enabled, "enabled")
+        if video_config.enabled != parsed_enabled:
+            video_config.enabled = parsed_enabled
+            changed = True
+
+    model = query_first(query, "model")
+    if model is not None:
+        model = model.strip()
+        if not model:
+            raise WebUISettingsError("video generation model is required")
+        if len(model) > 200:
+            raise WebUISettingsError("video generation model is too long")
+        if video_config.model != model:
+            video_config.model = model
+            changed = True
+
+    default_duration = query_first_alias(query, "default_duration", "defaultDuration")
+    if default_duration is not None:
+        try:
+            duration = int(default_duration)
+        except ValueError:
+            raise WebUISettingsError("duration must be an integer") from None
+        if duration < 1 or duration > 15:
+            raise WebUISettingsError("duration must be between 1 and 15")
+        if video_config.default_duration != duration:
+            video_config.default_duration = duration
+            changed = True
+
+    default_aspect_ratio = query_first_alias(
+        query,
+        "default_aspect_ratio",
+        "defaultAspectRatio",
+    )
+    if default_aspect_ratio is not None:
+        default_aspect_ratio = default_aspect_ratio.strip()
+        if default_aspect_ratio not in {"16:9", "1:1", "9:16"}:
+            raise WebUISettingsError("unsupported aspect ratio")
+        if video_config.default_aspect_ratio != default_aspect_ratio:
+            video_config.default_aspect_ratio = default_aspect_ratio
+            changed = True
+
+    default_resolution = query_first_alias(
+        query,
+        "default_resolution",
+        "defaultResolution",
+    )
+    if default_resolution is not None:
+        default_resolution = default_resolution.strip()
+        if default_resolution not in {"720p", "1080p"}:
+            raise WebUISettingsError("unsupported resolution")
+        if video_config.default_resolution != default_resolution:
+            video_config.default_resolution = default_resolution
+            changed = True
+
+    return changed
+
+
 def update_transcription_settings(config: Config, query: QueryParams) -> bool:
     transcription = config.transcription
     changed = False
@@ -667,6 +741,11 @@ class CapabilitySettingsHandler:
                 operations.update_image,
                 "image",
                 True,
+            ),
+            "video-update": (
+                operations.update_video,
+                "video",
+                False,
             ),
         }.get(action)
         if mutation is None:

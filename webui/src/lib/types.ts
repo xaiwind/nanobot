@@ -628,6 +628,15 @@ export interface SettingsPayload {
       default_model?: string | null;
     }>;
   };
+  video_generation: {
+    enabled: boolean;
+    provider: string;
+    model: string;
+    default_duration: number;
+    default_aspect_ratio: string;
+    default_resolution: string;
+    save_dir: string;
+  };
   transcription?: {
     enabled: boolean;
     provider: string;
@@ -720,7 +729,7 @@ export interface SettingsPayload {
     exec_path_append_set: boolean;
   };
   requires_restart: boolean;
-  restart_required_sections?: Array<"runtime" | "browser" | "image">;
+  restart_required_sections?: Array<"runtime" | "browser" | "image" | "video">;
   version?: {
     current: string;
   };
@@ -1153,6 +1162,15 @@ export interface ImageGenerationSettingsUpdate {
   defaultAspectRatio: string;
   defaultImageSize: string;
   maxImagesPerTurn: number;
+}
+
+export interface VideoGenerationSettingsUpdate {
+  enabled?: boolean;
+  model?: string;
+  defaultDuration?: number;
+  defaultAspectRatio?: string;
+  defaultResolution?: string;
+  saveDir?: string;
 }
 
 export interface TranscriptionSettingsUpdate {

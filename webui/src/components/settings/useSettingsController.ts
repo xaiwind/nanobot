@@ -55,6 +55,7 @@ const EMPTY_PENDING_RESTART_SECTIONS: PendingRestartSections = {
   runtime: false,
   browser: false,
   image: false,
+  video: false,
 };
 
 function pendingRestartSectionsFromPayload(payload: SettingsPayload): PendingRestartSections {
@@ -63,6 +64,7 @@ function pendingRestartSectionsFromPayload(payload: SettingsPayload): PendingRes
     runtime: sections.includes("runtime"),
     browser: sections.includes("browser"),
     image: sections.includes("image"),
+    video: sections.includes("video"),
   };
 }
 
@@ -105,7 +107,8 @@ export function useSettingsController({
     imageGenerationForm, imageGenerationSaving, networkSafetyForm, networkSafetySaving,
     setImageGenerationForm, setNetworkSafetyForm, setTranscriptionForm, setWebSearchForm,
     setWebSearchKeyEditing, setWebSearchKeyVisible, transcriptionForm,
-    transcriptionSaving, webSearchForm, webSearchKeyEditing, webSearchKeyVisible,
+    transcriptionSaving, videoGenerationForm, videoGenerationSaving,
+    setVideoGenerationForm, webSearchForm, webSearchKeyEditing, webSearchKeyVisible,
     webSearchSaving,
   } = capabilityState;
   const systemState = useSystemSettingsState();
@@ -278,6 +281,19 @@ export function useSettingsController({
     );
   }, [imageGenerationForm, settings]);
 
+  const videoGenerationDirty = useMemo(() => {
+    if (!settings) return false;
+    const videoGeneration = settings.video_generation;
+    if (!videoGeneration) return false;
+    return (
+      videoGenerationForm.enabled !== videoGeneration.enabled ||
+      videoGenerationForm.model !== videoGeneration.model ||
+      videoGenerationForm.defaultDuration !== videoGeneration.default_duration ||
+      videoGenerationForm.defaultAspectRatio !== videoGeneration.default_aspect_ratio ||
+      videoGenerationForm.defaultResolution !== videoGeneration.default_resolution
+    );
+  }, [videoGenerationForm, settings]);
+
   const transcriptionDirty = useMemo(() => {
     if (!settings) return false;
     const transcription = settings.transcription ?? DEFAULT_TRANSCRIPTION_SETTINGS;
@@ -411,6 +427,7 @@ export function useSettingsController({
     setError,
     installCapabilities,
     imageGenerationDirty,
+    videoGenerationDirty,
     transcriptionDirty,
     networkSafetyDirty,
   });
@@ -435,6 +452,7 @@ export function useSettingsController({
     saveImageGenerationSettings,
     saveNetworkSafetySettings,
     saveTranscriptionSettings,
+    saveVideoGenerationSettings,
     saveWebSearch,
   } = capabilityActions;
   const {
@@ -511,6 +529,11 @@ export function useSettingsController({
     imageGenerationDirty,
     imageGenerationForm,
     imageGenerationSaving,
+    videoGenerationDirty,
+    videoGenerationForm,
+    videoGenerationSaving,
+    setVideoGenerationForm,
+    saveVideoGenerationSettings,
     installCapabilities,
     loading,
     localPrefs,

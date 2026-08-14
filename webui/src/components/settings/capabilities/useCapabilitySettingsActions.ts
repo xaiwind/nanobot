@@ -13,6 +13,7 @@ import type {
 } from "@/components/settings/contracts";
 import {
   updateImageGenerationSettings,
+  updateVideoGenerationSettings,
   updateNetworkSafetySettings,
   updateTranscriptionSettings,
   updateWebSearchSettings,
@@ -31,6 +32,7 @@ interface CapabilitySettingsActionsOptions {
   setError: Dispatch<SetStateAction<string | null>>;
   installCapabilities: (names: string[]) => Promise<boolean>;
   imageGenerationDirty: boolean;
+  videoGenerationDirty: boolean;
   transcriptionDirty: boolean;
   networkSafetyDirty: boolean;
 }
@@ -46,6 +48,7 @@ export function useCapabilitySettingsActions({
   setError,
   installCapabilities,
   imageGenerationDirty,
+  videoGenerationDirty,
   transcriptionDirty,
   networkSafetyDirty,
 }: CapabilitySettingsActionsOptions) {
@@ -56,6 +59,10 @@ export function useCapabilitySettingsActions({
     networkSafetySaving,
     setImageGenerationSaving,
     setNetworkSafetySaving,
+    setVideoGenerationForm: _setVideoGenerationForm,
+    setVideoGenerationSaving,
+    videoGenerationForm,
+    videoGenerationSaving,
     setTranscriptionSaving,
     setWebSearchForm,
     setWebSearchKeyEditing,
@@ -83,6 +90,24 @@ export function useCapabilitySettingsActions({
       setError((err as Error).message);
     } finally {
       setImageGenerationSaving(false);
+    }
+  };
+
+  const saveVideoGenerationSettings = async () => {
+    if (!settings || !videoGenerationDirty || videoGenerationSaving) return;
+    setVideoGenerationSaving(true);
+    try {
+      const payload = await updateVideoGenerationSettings(client, videoGenerationForm);
+      applyPayload(payload);
+      if (payload.requires_restart) {
+        setPendingRestartSections((prev) => ({ ...prev, video: true }));
+      }
+      await maybeRestartHostEngine(payload);
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setVideoGenerationSaving(false);
     }
   };
 
@@ -219,6 +244,7 @@ export function useCapabilitySettingsActions({
     saveImageGenerationSettings,
     saveNetworkSafetySettings,
     saveTranscriptionSettings,
+    saveVideoGenerationSettings,
     saveWebSearch,
   };
 }

@@ -155,6 +155,7 @@ _WEBUI_MUTATION_PATHS = {
     "settings.api_service.start": "/api/settings/api-service/start",
     "settings.api_service.stop": "/api/settings/api-service/stop",
     "settings.image_generation.update": "/api/settings/image-generation/update",
+    "settings.video_generation.update": "/api/settings/video-generation/update",
     "settings.transcription.update": "/api/settings/transcription/update",
     "settings.network_safety.update": "/api/settings/network-safety/update",
     "settings.cli_app.install": "/api/settings/cli-apps/install",
