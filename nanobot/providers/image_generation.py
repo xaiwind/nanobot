@@ -143,6 +143,25 @@ def _aihubmix_size(aspect_ratio: str | None, image_size: str | None) -> str:
     return "auto"
 
 
+def _xai_resolution(image_size: str | None) -> str | None:
+    """Map a WebUI size hint onto xAI's ``resolution`` values.
+
+    xAI rejects OpenAI's ``size`` parameter and takes ``1k``/``2k`` instead.
+    Both the custom-provider path and the dedicated Grok client need this, so
+    it lives at module scope rather than on either class.
+    """
+    if not image_size:
+        return None
+    requested = image_size.strip().lower()
+    if requested in {"1k", "2k"}:
+        return requested
+    if requested in {"1024x1024", "1024"}:
+        return "1k"
+    if requested in {"2048x2048", "2048"}:
+        return "2k"
+    return None
+
+
 def _aihubmix_model_path(model: str) -> str:
     if "/" in model:
         return model
@@ -1349,7 +1368,7 @@ class CustomImageGenerationClient(ImageGenerationProvider):
             # xAI protocol: aspect_ratio (+ resolution), never `size`.
             if aspect_ratio:
                 body["aspect_ratio"] = aspect_ratio
-            resolution = XAIGrokImageGenerationClient._xai_resolution(image_size)
+            resolution = _xai_resolution(image_size)
             if resolution:
                 body["resolution"] = resolution
         else:
@@ -2159,19 +2178,6 @@ class XAIGrokImageGenerationClient(ImageGenerationProvider):
             return api_base.rstrip("/")
         return self._default_base_url()
 
-    @staticmethod
-    def _xai_resolution(image_size: str | None) -> str | None:
-        if not image_size:
-            return None
-        s = image_size.strip().lower()
-        if s in {"1k", "2k"}:
-            return s
-        if s in {"1024x1024", "1024"}:
-            return "1k"
-        if s in {"2048x2048", "2048"}:
-            return "2k"
-        return None
-
     async def _get_bearer(self) -> str:
         from nanobot.providers.xai_oauth import get_xai_oauth_token
 
@@ -2217,7 +2223,7 @@ class XAIGrokImageGenerationClient(ImageGenerationProvider):
         }
         if aspect_ratio:
             body["aspect_ratio"] = aspect_ratio
-        resolution = self._xai_resolution(image_size)
+        resolution = _xai_resolution(image_size)
         if resolution:
             body["resolution"] = resolution
         body.update(self.extra_body)

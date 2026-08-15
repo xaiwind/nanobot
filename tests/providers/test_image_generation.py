@@ -23,6 +23,7 @@ from nanobot.providers.image_generation import (
     StepFunImageGenerationClient,
     XAIGrokImageGenerationClient,
     ZhipuImageGenerationClient,
+    _xai_resolution,
     get_image_gen_provider,
 )
 
@@ -1597,22 +1598,22 @@ async def test_openai_no_images_raises() -> None:
 # --- resolution mapping ---
 
 def test_xai_resolution_1k():
-    assert XAIGrokImageGenerationClient._xai_resolution("1K") == "1k"
+    assert _xai_resolution("1K") == "1k"
 
 def test_xai_resolution_2k():
-    assert XAIGrokImageGenerationClient._xai_resolution("2K") == "2k"
+    assert _xai_resolution("2K") == "2k"
 
 def test_xai_resolution_1024():
-    assert XAIGrokImageGenerationClient._xai_resolution("1024x1024") == "1k"
+    assert _xai_resolution("1024x1024") == "1k"
 
 def test_xai_resolution_2048():
-    assert XAIGrokImageGenerationClient._xai_resolution("2048x2048") == "2k"
+    assert _xai_resolution("2048x2048") == "2k"
 
 def test_xai_resolution_unknown_returns_none():
-    assert XAIGrokImageGenerationClient._xai_resolution("4K") is None
+    assert _xai_resolution("4K") is None
 
 def test_xai_resolution_none_input():
-    assert XAIGrokImageGenerationClient._xai_resolution(None) is None
+    assert _xai_resolution(None) is None
 
 # --- registry ---
 
